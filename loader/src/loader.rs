@@ -1,6 +1,6 @@
 use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::{copy_nonoverlapping, transmute}};
 
-use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR}, shared::{minwindef::{HMODULE, FARPROC}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
+use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
@@ -27,7 +27,7 @@ type fnNtFlushInstructionCache = unsafe extern "system" fn(
     Length: SIZE_T
 ) -> NTSTATUS;
 
-/*
+
 #[allow(non_camel_case_types)]
 type fnVirtualAlloc = unsafe extern "system" fn(
     lpAddress: LPVOID, 
@@ -35,7 +35,6 @@ type fnVirtualAlloc = unsafe extern "system" fn(
     flAllocationType: DWORD, 
     flProtect: DWORD
 ) -> LPVOID;
-*/
 
 // Hash
 const KERNEL32DLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("kernel32.dll"));
@@ -43,13 +42,13 @@ const NTDLLDLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("ntdll.dll"));
 
 const LOADLIBRARYA_HASH: u32 = fnv1a_hash_32("LoadLibraryA".as_bytes());
 const GETPROCADDRESS_HASH: u32 = fnv1a_hash_32("GetProcAddress".as_bytes());
-//const VIRTUALALLOC_HASH: u32 = fnv1a_hash_32("VirtualAlloc".as_bytes());
+const VIRTUALALLOC_HASH: u32 = fnv1a_hash_32("VirtualAlloc".as_bytes());
 const NTFLUSHINSTRUCTIONCACHE_HASH: u32 = fnv1a_hash_32("NtFlushInstructionCache".as_bytes());
 
 // Function pointers (Thanks B3NNY)
 static mut LOAD_LIBRARY_A: Option<fnLoadLibraryA> = None;
 static mut GET_PROC_ADDRESS: Option<fnGetProcAddress> = None;
-//static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
+static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
 static mut NT_FLUSH_INSTRUCTION_CACHE: Option<fnNtFlushInstructionCache> = None;
 
 
@@ -68,18 +67,18 @@ pub fn reflective_loader() {
 		asm!("lea {rip}, [rip]", rip = out(reg) rip);
 	};
 
-    let mut library_address = rip & !0xfff;
-    println!("[+] Return Address: {:#x}", library_address);
+    let mut caller_module_base_address = rip & !0xfff;
+    println!("[+] Return Address: {:#x}", caller_module_base_address);
 
 	// loop through memory backwards searching for our images base address
     loop {
-        if unsafe { (*(library_address as PIMAGE_DOS_HEADER)).e_magic == IMAGE_DOS_SIGNATURE } {
-            let mut header_value = unsafe { (*(library_address as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
+        if unsafe { (*(caller_module_base_address as PIMAGE_DOS_HEADER)).e_magic == IMAGE_DOS_SIGNATURE } {
+            let mut header_value = unsafe { (*(caller_module_base_address as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
             // some x64 dll's can trigger a bogus signature (IMAGE_DOS_SIGNATURE == 'POP r10'),
 			// we sanity check the e_lfanew with an upper threshold value of 1024 to avoid problems.
             if header_value >= size_of::<IMAGE_DOS_HEADER>() && header_value < 1024 {
 
-                header_value += library_address;
+                header_value += caller_module_base_address;
 
                 #[cfg(target_arch = "x86")]
                 let validate = unsafe { (*(header_value as PIMAGE_NT_HEADERS32)).Signature == IMAGE_NT_SIGNATURE };
@@ -93,10 +92,10 @@ pub fn reflective_loader() {
                 }
             }
         }
-        library_address -= 1;
+        caller_module_base_address -= 1;
     }
 
-    println!("[+] IMAGE_DOS_HEADER: {:#x}", library_address);
+    println!("[+] IMAGE_DOS_HEADER: {:#x}", caller_module_base_address);
 
     // STEP 1: process the kernels exports for the functions our loader needs...
 
@@ -132,9 +131,9 @@ pub fn reflective_loader() {
     unsafe { GET_PROC_ADDRESS = Some(transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
     println!("[+] GetProcAddress {:?}", getprocaddress_address);
 
-    //let virtualalloc_address = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
-    //unsafe { VIRTUAL_ALLOC = Some(transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
-    //println!("[+] VirtualAlloc {:?}", virtualalloc_address);
+    let virtualalloc_address = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
+    unsafe { VIRTUAL_ALLOC = Some(transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
+    println!("[+] VirtualAlloc {:?}", virtualalloc_address);
 
     //ntdll
     let ntflushinstructioncache_address = get_exports_by_hash(ntdll_base, NTFLUSHINSTRUCTIONCACHE_HASH).expect("failed to get NtFlushInstructionCache by hash");
@@ -142,66 +141,123 @@ pub fn reflective_loader() {
     println!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_address);
 
     // STEP 2: load our image into a new permanent location in memory...
-    let local_image = copy_sections_to_local_process(library_address);
-    println!("[+] Local Image: {:p}", local_image.as_ptr());
-
+    let allocated_memory_base_address = copy_sections_to_local_process(caller_module_base_address);
+    println!("[+] Local Image: {:p}", allocated_memory_base_address.as_ptr());
+    //let allocated_memory_base_address = copy_sections_to_local_process_via_virtual_alloc(caller_module_base_address);
+    //println!("[+] Local Image: {:p}", allocated_memory_base_address);
+    
     // STEP 4: process our images import table...
-    unsafe { resolve_imports(local_image.as_ptr()) };
+    unsafe { resolve_imports(allocated_memory_base_address.as_ptr()) };
+
+    // STEP 5: process all of our images relocations...
+    unsafe { rebase_image(caller_module_base_address as _, allocated_memory_base_address.as_ptr()) };
+
+    // STEP 6: call our images entry point
 
     pause();
 }
 
-/// Resolve the image imports
-unsafe fn resolve_imports(local_image: *const u8) {
+/// Rebase the image / perform image base relocation
+unsafe fn rebase_image(caller_module_base_address: *mut u8, allocated_memory_base_address: *const u8, ) {
+    
+    println!("[*] allocated_memory_base_address: {:?} caller_module_base_address: {:?}", allocated_memory_base_address, caller_module_base_address);
 
-    let dos_header = local_image as PIMAGE_DOS_HEADER;
+    let dos_header = caller_module_base_address as PIMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
     let nt_headers = unsafe { (*dos_header).e_lfanew as PIMAGE_NT_HEADERS32 };
 
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (local_image as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (caller_module_base_address as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+
+    // Get a pointer to the first _IMAGE_BASE_RELOCATION
+    let mut base_relocation = (caller_module_base_address as usize 
+        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].VirtualAddress as usize) as PIMAGE_BASE_RELOCATION;
+    
+    // Get the end of _IMAGE_BASE_RELOCATION
+    let base_relocation_end = base_relocation as usize 
+        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].Size as usize;
+    
+    // Calculate the difference between remote allocated memory region where the image will be loaded and preferred ImageBase (delta)
+    //let delta = allocated_memory_base_address as isize - (*nt_headers).OptionalHeader.ImageBase as isize;
+    let delta = (*nt_headers).OptionalHeader.ImageBase as isize - allocated_memory_base_address as isize;
+    println!("[+] Delta: {:#x}", delta);
+    
+    while (*base_relocation).VirtualAddress != 0u32 && (*base_relocation).VirtualAddress as usize <= base_relocation_end && (*base_relocation).SizeOfBlock != 0u32 {
+        
+        // Get the VirtualAddress, SizeOfBlock and entries count of the current _IMAGE_BASE_RELOCATION block
+        let address = (caller_module_base_address as usize + (*base_relocation).VirtualAddress as usize) as isize;
+        let item = (base_relocation as usize + std::mem::size_of::<IMAGE_BASE_RELOCATION>()) as *const u16;
+        let count = ((*base_relocation).SizeOfBlock as usize - std::mem::size_of::<IMAGE_BASE_RELOCATION>()) / std::mem::size_of::<u16>() as usize;
+
+        for i in 0..count {
+            // Get the Type and Offset from the Block Size field of the _IMAGE_BASE_RELOCATION block
+            let type_field = item.offset(i as isize).read() >> 12;
+            let offset = item.offset(i as isize).read() & 0xFFF;
+
+            //IMAGE_REL_BASED_DIR32 does not exist
+            //#define IMAGE_REL_BASED_DIR64   10
+            if type_field == IMAGE_REL_BASED_DIR64 {
+                // Add the delta to the value of each address where the relocation needs to be performed
+                *((address + offset as isize) as *mut isize) += delta;
+            }
+        }
+
+        // Get a pointer to the next _IMAGE_BASE_RELOCATION
+        base_relocation = (base_relocation as usize + (*base_relocation).SizeOfBlock as usize) as PIMAGE_BASE_RELOCATION;
+    }
+}
+
+/// Resolve the image imports
+unsafe fn resolve_imports(allocated_memory_base_address: *const u8) {
+
+    let dos_header = allocated_memory_base_address as PIMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = unsafe { (*dos_header).e_lfanew as PIMAGE_NT_HEADERS32 };
+
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = (allocated_memory_base_address as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
 
     // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
-    let mut import_directory = (local_image as usize 
+    let mut import_directory = (allocated_memory_base_address as usize 
         + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
 
     while (*import_directory).Name != 0 {
-        
+
         // Get the name of the dll in the current _IMAGE_IMPORT_DESCRIPTOR
-        let dll_name = (local_image as usize 
-            + (*import_directory).Name as usize) as *const i8;
+        let dll_name = (allocated_memory_base_address as usize 
+            + (*import_directory).Name as usize) as *const i8;        
         
-        // Load the DLL in the in the address space of the process
+            // Load the DLL in the in the address space of the process
         let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name); //call function pointer LOAD_LIBRARY_A
-        
+
         // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
         #[cfg(target_arch = "x86")]
-        let mut original_first_thunk = (local_image as usize 
+        let mut original_first_thunk = (allocated_memory_base_address as usize 
             + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA32;
 
         // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
         #[cfg(target_arch = "x86_64")]
-        let mut original_first_thunk = (local_image as usize 
+        let mut original_first_thunk = (allocated_memory_base_address as usize 
             + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA64;
 
         // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
         #[cfg(target_arch = "x86")]
-        let mut thunk = (local_image as usize 
+        let mut thunk = (allocated_memory_base_address as usize 
             + (*import_directory).FirstThunk as usize) 
             as PIMAGE_THUNK_DATA32;
         
         // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
         #[cfg(target_arch = "x86_64")]
-        let mut thunk = (local_image as usize 
+        let mut thunk = (allocated_memory_base_address as usize 
             + (*import_directory).FirstThunk as usize) 
             as PIMAGE_THUNK_DATA64;
  
-        
         while (*original_first_thunk).u1.Function() != &0 {
             
             // Get a pointer to _IMAGE_IMPORT_BY_NAME
-            let thunk_data = (local_image as usize
+            let thunk_data = (allocated_memory_base_address as usize
                 + *(*original_first_thunk).u1.AddressOfData() as usize)
                 as PIMAGE_IMPORT_BY_NAME;
 
@@ -240,7 +296,60 @@ unsafe fn resolve_imports(local_image: *const u8) {
     }
 }
 
-/// Copy sections of the dll to a memory location in local process (heap) and does not use VirtualAlloc or HeapAlloc
+
+/// VIRTUAL ALLOC
+fn copy_sections_to_local_process_via_virtual_alloc(library_address: usize) -> *mut u8 {
+
+    let dos_header = library_address as PIMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32 };
+
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
+
+    let image_size = unsafe { (*nt_headers).OptionalHeader.SizeOfImage as usize };
+    
+    // Allocate memory on the heap for the image
+    //let mut image = vec![0; image_size];
+    let image = unsafe { VIRTUAL_ALLOC.unwrap()(std::ptr::null_mut(), image_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE) };
+
+    println!("VirtualAlloc Allocated Memory Region {:?}", image);
+    pause();
+
+    // get a pointer to the _IMAGE_SECTION_HEADER
+    let section_header = unsafe { (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as PIMAGE_SECTION_HEADER };
+
+    for i in unsafe { 0..(*nt_headers).FileHeader.NumberOfSections } {
+        // get a reference to the current _IMAGE_SECTION_HEADER
+        let section_header_i = unsafe { &*(section_header.add(i as usize)) };
+
+        // get the pointer to current section header's virtual address
+        let destination = unsafe { image.add(section_header_i.VirtualAddress as usize) };
+        //println!("destination: {:?}", destination);
+        
+        // get a pointer to the current section header's data
+        let source = library_address as usize + section_header_i.PointerToRawData as usize;
+        //println!("source: {:#x}", source);
+        
+        // get the size of the current section header's data
+        let size = section_header_i.SizeOfRawData as usize;
+        //println!("Size: {:?}", size);
+
+        // copy section headers into the local process (allocated memory on the heap)
+        unsafe { 
+            copy_nonoverlapping(
+                source as *const std::ffi::c_void, // must be std::ffi::c_void not winapi::c_void or else it fails
+                destination as *mut _,
+                size,
+            )
+        };
+    }
+
+    image as _
+}
+
+// Copy sections of the dll to a memory location in local process (heap) and does not use VirtualAlloc or HeapAlloc
 fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
 
     let dos_header = library_address as PIMAGE_DOS_HEADER;
@@ -251,7 +360,7 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
     #[cfg(target_arch = "x86_64")]
     let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
 
-    let image_size = unsafe { (*nt_headers).OptionalHeader.SizeOfImage } as usize ;
+    let image_size = unsafe { (*nt_headers).OptionalHeader.SizeOfImage as usize};
     
     // Allocate memory on the heap for the image
     let mut image = vec![0; image_size];
@@ -264,7 +373,7 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
         let section_header_i = unsafe { &*(section_header.add(i as usize)) };
 
         // get the pointer to current section header's virtual address
-        let destination = unsafe { image.as_mut_ptr().offset(section_header_i.VirtualAddress as isize) };
+        let destination = unsafe { image.as_mut_ptr().add(section_header_i.VirtualAddress as usize) };
         //println!("destination: {:?}", destination);
         
         // get a pointer to the current section header's data
