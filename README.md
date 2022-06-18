@@ -29,3 +29,4 @@ Development is in progress.
 * https://github.com/Ben-Lichtman/reloader/ (B3NNY)
 * https://github.com/memN0ps/mmapper-rs
 * https://github.com/monoxgas/sRDI
+* https://github.com/2vg/blackcat-rs/tree/master/crate/mini-sRDI

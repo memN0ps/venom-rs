@@ -1,6 +1,6 @@
-use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::{copy_nonoverlapping, transmute}};
+use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of};
 
-use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
+use winapi::{um::{winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH, PAGE_EXECUTE, IMAGE_REL_BASED_HIGHLOW}, memoryapi::VirtualProtect}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
@@ -137,30 +137,30 @@ pub fn reflective_loader(dll_bytes: *const u8) {
     // get exports by hash and store the their virtual address
     //kernel32
     let loadlibrarya_address = get_exports_by_hash(kernel32_base, LOADLIBRARYA_HASH).expect("failed to get LoadLibraryA by hash");
-    unsafe { LOAD_LIBRARY_A = Some(transmute::<_, fnLoadLibraryA>(loadlibrarya_address)) };
+    unsafe { LOAD_LIBRARY_A = Some(std::mem::transmute::<_, fnLoadLibraryA>(loadlibrarya_address)) };
     println!("[+] LoadLibraryA {:?}", loadlibrarya_address);
 
     let getprocaddress_address = get_exports_by_hash(kernel32_base, GETPROCADDRESS_HASH).expect("failed to get GetProcAddress by hash");
-    unsafe { GET_PROC_ADDRESS = Some(transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
+    unsafe { GET_PROC_ADDRESS = Some(std::mem::transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
     println!("[+] GetProcAddress {:?}", getprocaddress_address);
 
     let virtualalloc_address = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
-    unsafe { VIRTUAL_ALLOC = Some(transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
+    unsafe { VIRTUAL_ALLOC = Some(std::mem::transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
     println!("[+] VirtualAlloc {:?}", virtualalloc_address);
-    //unsafe { VIRTUAL_ALLOC.unwrap()(std::ptr::null_mut(), image_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)
 
     //ntdll
     let ntflushinstructioncache_address = get_exports_by_hash(ntdll_base, NTFLUSHINSTRUCTIONCACHE_HASH).expect("failed to get NtFlushInstructionCache by hash");
-    unsafe { NT_FLUSH_INSTRUCTION_CACHE = Some(transmute::<_, fnNtFlushInstructionCache>(ntflushinstructioncache_address)) };
+    unsafe { NT_FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnNtFlushInstructionCache>(ntflushinstructioncache_address)) };
     println!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_address);
 
     // STEP 2: load our image into a new permanent location in memory...
-    let allocated_image_base = copy_sections_to_local_process(current_image_base);
+    let mut allocated_image_base = copy_sections_to_local_process(current_image_base);
     println!("[+] Local Image: {:p}", allocated_image_base.as_ptr());
     
     // STEP 4: process our images import table...
     unsafe { resolve_imports(allocated_image_base.as_ptr()) };
 
+    println!("[*] Rebasing Image...");
     // STEP 5: process all of our images relocations...
     unsafe { rebase_image(allocated_image_base.as_ptr(), current_image_base as _) };
 
@@ -171,8 +171,11 @@ pub fn reflective_loader(dll_bytes: *const u8) {
     #[cfg(target_arch = "x86_64")]
     let current_nt_header = current_nt_header as PIMAGE_NT_HEADERS64;
 
-    let dll_main_address = unsafe { allocated_image_base.as_ptr() as usize + (*current_nt_header).OptionalHeader.AddressOfEntryPoint as usize };
-    println!("[+] DLLMain Address: {:#x}", dll_main_address);
+    let old_protect: *mut u32 = std::ptr::null_mut();
+    unsafe { VirtualProtect(allocated_image_base.as_mut_ptr() as _, allocated_image_base.len(), PAGE_EXECUTE_READWRITE, old_protect) };
+
+    let entry_point = unsafe { allocated_image_base.as_ptr() as usize + (*current_nt_header).OptionalHeader.AddressOfEntryPoint as usize };
+    println!("[+] AddressOfEntryPoint: {:#x}", entry_point);
 
     // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
     unsafe { NT_FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
@@ -180,7 +183,7 @@ pub fn reflective_loader(dll_bytes: *const u8) {
     println!("[!] Calling DllMain...");
     
     #[allow(non_snake_case)]
-    let DllMain = unsafe { transmute::<_, fnDllMain>(dll_main_address) };
+    let DllMain = unsafe { std::mem::transmute::<_, fnDllMain>(entry_point) };
 
     pause();
 
@@ -188,7 +191,7 @@ pub fn reflective_loader(dll_bytes: *const u8) {
     unsafe { DllMain(std::ptr::null_mut(), DLL_PROCESS_ATTACH, std::ptr::null_mut()) };
 
     // STEP 8: return our new entry point address so whatever called us can call DllMain() if needed.
-    return;
+    //return;
 }
 
 
@@ -239,7 +242,7 @@ unsafe fn rebase_image(allocated_image_base: *const u8, current_image_base: *mut
 
             //IMAGE_REL_BASED_DIR32 does not exist
             //#define IMAGE_REL_BASED_DIR64   10
-            if type_field == IMAGE_REL_BASED_DIR64 {
+            if type_field == IMAGE_REL_BASED_DIR64 || type_field == IMAGE_REL_BASED_HIGHLOW {
                 // Add the delta to the value of each address where the relocation needs to be performed
                 *((address + offset as isize) as *mut isize) += delta;
             }
@@ -337,8 +340,7 @@ unsafe fn resolve_imports(allocated_memory_base_address: *const u8) {
         import_directory = (import_directory as usize + size_of::<IMAGE_IMPORT_DESCRIPTOR>() as usize) as _;
     }
 }
-
-// Copy sections of the dll to a memory location in local process (heap) and does not use VirtualAlloc or HeapAlloc
+// Copy sections of the dll to a memory location
 fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
 
     let dos_header = library_address as PIMAGE_DOS_HEADER;
@@ -351,8 +353,11 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
 
     let image_size = unsafe { (*nt_headers).OptionalHeader.SizeOfImage as usize};
     
-    // Allocate memory on the heap for the image
+    // Allocate memory on the heap for the image (this won't work as memory needs to be executable when executed)
     let mut image = vec![0; image_size];
+
+    //Allocate memory using VirtualAlloc (RWX)
+    //let image = unsafe { VIRTUAL_ALLOC.unwrap()(std::ptr::null_mut(), image_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE) };
 
     // get a pointer to the _IMAGE_SECTION_HEADER
     let section_header = unsafe { (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as PIMAGE_SECTION_HEADER };
@@ -363,11 +368,11 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
 
         // get the pointer to current section header's virtual address
         let destination = unsafe { image.as_mut_ptr().add(section_header_i.VirtualAddress as usize) };
-        //println!("destination: {:?}", destination);
+        println!("destination: {:?}", destination);
         
         // get a pointer to the current section header's data
         let source = library_address as usize + section_header_i.PointerToRawData as usize;
-        //println!("source: {:#x}", source);
+        println!("source: {:#x}", source);
         
         // get the size of the current section header's data
         let size = section_header_i.SizeOfRawData as usize;
@@ -375,7 +380,7 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
 
         // copy section headers into the local process (allocated memory on the heap)
         unsafe { 
-            copy_nonoverlapping(
+            std::ptr::copy_nonoverlapping(
                 source as *const std::ffi::c_void, // must be std::ffi::c_void not winapi::c_void or else it fails
                 destination as *mut _,
                 size,
@@ -383,6 +388,7 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
         };
     }
 
+    pause();
     image
 }
 
