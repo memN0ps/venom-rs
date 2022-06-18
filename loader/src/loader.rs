@@ -1,6 +1,6 @@
-use std::{arch::asm, ffi::CStr, collections::BTreeMap, mem::size_of};
+use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::copy_nonoverlapping};
 
-use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, PIMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER}};
+use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, PIMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, PIMAGE_NT_HEADERS32, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER}};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
@@ -19,32 +19,34 @@ pub fn reflective_loader() {
 	let rip: usize;
 	
     unsafe {
+        #[cfg(target_arch = "x86")]
+        asm!("lea {eip}, [eip]", rip = out(reg) rip);
+
         #[cfg(target_arch = "x86_64")]
 		asm!("lea {rip}, [rip]", rip = out(reg) rip);
-		#[cfg(target_arch = "x86")]
-        asm!("lea {eip}, [eip]", rip = out(reg) rip);
 	};
 
-    let mut ret = rip & !0xfff;
-    println!("[+] Return address: {:#x}", ret);
+    let mut library_address = rip & !0xfff;
+    println!("[+] Return address: {:#x}", library_address);
 
 	// loop through memory backwards searching for our images base address
-    #[allow(unused_assignments)]
-    let mut dos_header: PIMAGE_DOS_HEADER;
     loop {
-        dos_header = ret as PIMAGE_DOS_HEADER;
-
-        if unsafe { (*dos_header).e_magic == IMAGE_DOS_SIGNATURE } {
-			// some x64 dll's can trigger a bogus signature (IMAGE_DOS_SIGNATURE == 'POP r10'),
+        if unsafe { (*(library_address as PIMAGE_DOS_HEADER)).e_magic == IMAGE_DOS_SIGNATURE } {
+            let mut header_value = unsafe { (*(library_address as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
+            // some x64 dll's can trigger a bogus signature (IMAGE_DOS_SIGNATURE == 'POP r10'),
 			// we sanity check the e_lfanew with an upper threshold value of 1024 to avoid problems.
-            let header_value = unsafe { (*dos_header).e_lfanew };
-            
-            if header_value >= size_of::<IMAGE_DOS_HEADER>().try_into().unwrap() && header_value < 1024 {
-                println!("[+] IMAGE_DOS_HEADER: {:?}", dos_header);
-                break;
+            if header_value >= size_of::<IMAGE_DOS_HEADER>() && header_value < 1024 {
+
+                header_value += library_address;
+				// break if we have found a valid MZ/PE header
+                if unsafe { (*(header_value as PIMAGE_NT_HEADERS64)).Signature == IMAGE_NT_SIGNATURE 
+                    || (*(header_value as PIMAGE_NT_HEADERS32)).Signature == IMAGE_NT_SIGNATURE } {
+                    println!("[+] IMAGE_DOS_HEADER: {:#x}", library_address);
+                    break;
+                }
             }
         }
-        ret = ret - 1;
+        library_address -= 1;
     }
 
     // STEP 1: process the kernels exports for the functions our loader needs...
@@ -52,10 +54,11 @@ pub fn reflective_loader() {
     // get the Process Enviroment Block
 	let teb: PTEB;
 	unsafe {
+        #[cfg(target_arch = "x86")]
+		asm!("mov {teb}, fs:[0x18]", teb = out(reg) teb);
+
 		#[cfg(target_arch = "x86_64")]
 		asm!("mov {teb}, gs:[0x30]", teb = out(reg) teb);
-		#[cfg(target_arch = "x86")]
-		asm!("mov {teb}, fs:[0x18]", teb = out(reg) teb);
 	}
 
 	let teb = unsafe { &mut *teb };
@@ -70,11 +73,78 @@ pub fn reflective_loader() {
     let ntdll_base = get_loaded_module_by_hash(peb_ldr, NTDLLDLL_HASH).expect("failed to get ntdll by hash");
     println!("NTDLL: {:?}", ntdll_base);
 
-    // get exports by hash
-    let loadliba_hash = get_exports_by_hash(kernel32_base, LOADLIBRARYA_HASH).expect("failed to get exports by hash");
-    println!("[+] LoadLibraryA {:?}", loadliba_hash);
+    // get exports by hash and store the their virtual address
+    //kernel32
+    let loadlibrarya_hash = get_exports_by_hash(kernel32_base, LOADLIBRARYA_HASH).expect("failed to get LoadLibraryA by hash");
+    println!("[+] LoadLibraryA {:?}", loadlibrarya_hash);
+
+    let getprocaddress_hash = get_exports_by_hash(kernel32_base, GETPROCADDRESS_HASH).expect("failed to get GetProcAddress by hash");
+    println!("[+] GetProcAddress {:?}", getprocaddress_hash);
+
+    let virtualalloc_hash = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
+    println!("[+] VirtualAlloc {:?}", virtualalloc_hash);
+
+    //ntdll
+    let ntflushinstructioncache_hash = get_exports_by_hash(ntdll_base, NTFLUSHINSTRUCTIONCACHE_HASH).expect("failed to get NtFlushInstructionCache by hash");
+    println!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_hash);
+
 
     // STEP 2: load our image into a new permanent location in memory...
+    let local_image = copy_sections_to_local_process(library_address);
+    println!("[+] Local Image: {:p}", local_image.as_ptr());
+
+    // STEP 4: process our images import table...
+
+
+    pause();
+}
+
+/// Copy sections of the dll to a memory location in local process (heap) and does not use VirtualAlloc or HeapAlloc
+fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
+
+    let dos_header = library_address as PIMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = unsafe { (*dos_header).e_lfanew as PIMAGE_NT_HEADERS32 };
+
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
+
+    let image_size = unsafe { (*nt_headers).OptionalHeader.SizeOfImage } as usize ;
+    
+    // Allocate memory on the heap for the image
+    let mut image = vec![0; image_size];
+
+    // get a pointer to the _IMAGE_SECTION_HEADER
+    let section_header = unsafe { (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as PIMAGE_SECTION_HEADER };
+
+    for i in unsafe { 0..(*nt_headers).FileHeader.NumberOfSections } {
+        // get a reference to the current _IMAGE_SECTION_HEADER
+        let section_header_i = unsafe { &*(section_header.add(i as usize)) };
+
+        // get the pointer to current section header's virtual address
+        let destination = unsafe { image.as_mut_ptr().offset(section_header_i.VirtualAddress as isize) };
+        //println!("destination: {:?}", destination);
+        
+        // get a pointer to the current section header's data
+        let source = library_address as usize + section_header_i.PointerToRawData as usize;
+        //println!("source: {:#x}", source);
+        
+        // get the size of the current section header's data
+        let size = section_header_i.SizeOfRawData as usize;
+        //println!("Size: {:?}", size);
+
+        // copy section headers into the local process (allocated memory on the heap)
+        unsafe { 
+            copy_nonoverlapping(
+                source as *const std::ffi::c_void, // must be std::ffi::c_void not winapi::c_void or else it fails
+                destination as *mut _,
+                size,
+            )
+        };
+    }
+
+    image
 }
 
 /// Gets exports by hash
