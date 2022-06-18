@@ -1,16 +1,58 @@
-use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::copy_nonoverlapping};
+use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of, intrinsics::{copy_nonoverlapping, transmute}};
 
-use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, PIMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, PIMAGE_NT_HEADERS32, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER}};
+use winapi::{um::winnt::{PIMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR}, shared::{minwindef::{HMODULE, FARPROC}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
+#[cfg(target_arch = "x86")]
+use winapi::{um::winnt::{PIMAGE_NT_HEADERS32, PIMAGE_THUNK_DATA32, IMAGE_SNAP_BY_ORDINAL32, IMAGE_ORDINAL32}};
+
+#[cfg(target_arch = "x86_64")]
+use winapi::{um::winnt::{PIMAGE_NT_HEADERS64, PIMAGE_THUNK_DATA64, IMAGE_SNAP_BY_ORDINAL64, IMAGE_ORDINAL64}};
+
+
+#[allow(non_camel_case_types)]
+type fnLoadLibraryA = unsafe extern "system" fn(lpFileName: LPCSTR) -> HMODULE;
+
+#[allow(non_camel_case_types)]
+type fnGetProcAddress = unsafe extern "system" fn(
+    hModule: HMODULE, 
+    lpProcName: LPCSTR
+) -> FARPROC;
+
+#[allow(non_camel_case_types)]
+type fnNtFlushInstructionCache = unsafe extern "system" fn(
+    ProcessHandle: HANDLE, 
+    BaseAddress: PVOID, 
+    Length: SIZE_T
+) -> NTSTATUS;
+
+/*
+#[allow(non_camel_case_types)]
+type fnVirtualAlloc = unsafe extern "system" fn(
+    lpAddress: LPVOID, 
+    dwSize: SIZE_T, 
+    flAllocationType: DWORD, 
+    flProtect: DWORD
+) -> LPVOID;
+*/
+
+// Hash
 const KERNEL32DLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("kernel32.dll"));
 const NTDLLDLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("ntdll.dll"));
 
 const LOADLIBRARYA_HASH: u32 = fnv1a_hash_32("LoadLibraryA".as_bytes());
 const GETPROCADDRESS_HASH: u32 = fnv1a_hash_32("GetProcAddress".as_bytes());
-const VIRTUALALLOC_HASH: u32 = fnv1a_hash_32("VirtualAlloc".as_bytes());
+//const VIRTUALALLOC_HASH: u32 = fnv1a_hash_32("VirtualAlloc".as_bytes());
 const NTFLUSHINSTRUCTIONCACHE_HASH: u32 = fnv1a_hash_32("NtFlushInstructionCache".as_bytes());
+
+// Function pointers (Thanks B3NNY)
+static mut LOAD_LIBRARY_A: Option<fnLoadLibraryA> = None;
+static mut GET_PROC_ADDRESS: Option<fnGetProcAddress> = None;
+//static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
+static mut NT_FLUSH_INSTRUCTION_CACHE: Option<fnNtFlushInstructionCache> = None;
+
+
 
 pub fn reflective_loader() {
     // STEP 0: calculate our images current base address
@@ -27,7 +69,7 @@ pub fn reflective_loader() {
 	};
 
     let mut library_address = rip & !0xfff;
-    println!("[+] Return address: {:#x}", library_address);
+    println!("[+] Return Address: {:#x}", library_address);
 
 	// loop through memory backwards searching for our images base address
     loop {
@@ -38,16 +80,23 @@ pub fn reflective_loader() {
             if header_value >= size_of::<IMAGE_DOS_HEADER>() && header_value < 1024 {
 
                 header_value += library_address;
-				// break if we have found a valid MZ/PE header
-                if unsafe { (*(header_value as PIMAGE_NT_HEADERS64)).Signature == IMAGE_NT_SIGNATURE 
-                    || (*(header_value as PIMAGE_NT_HEADERS32)).Signature == IMAGE_NT_SIGNATURE } {
-                    println!("[+] IMAGE_DOS_HEADER: {:#x}", library_address);
+
+                #[cfg(target_arch = "x86")]
+                let validate = unsafe { (*(header_value as PIMAGE_NT_HEADERS32)).Signature == IMAGE_NT_SIGNATURE };
+
+                #[cfg(target_arch = "x86_64")]
+                let validate = unsafe { (*(header_value as PIMAGE_NT_HEADERS64)).Signature == IMAGE_NT_SIGNATURE };
+
+                // break if we have found a valid MZ/PE header
+                if validate {
                     break;
                 }
             }
         }
         library_address -= 1;
     }
+
+    println!("[+] IMAGE_DOS_HEADER: {:#x}", library_address);
 
     // STEP 1: process the kernels exports for the functions our loader needs...
 
@@ -67,36 +116,128 @@ pub fn reflective_loader() {
 
     // get kernel32 base address via hash
     let kernel32_base = get_loaded_module_by_hash(peb_ldr, KERNEL32DLL_HASH).expect("failed to kernel32 by hash");
-    println!("KERNEL32: {:?}", kernel32_base);
+    println!("[+] KERNEL32: {:?}", kernel32_base);
     
     // get ntdll base address via hash
     let ntdll_base = get_loaded_module_by_hash(peb_ldr, NTDLLDLL_HASH).expect("failed to get ntdll by hash");
-    println!("NTDLL: {:?}", ntdll_base);
+    println!("[+] NTDLL: {:?}", ntdll_base);
 
     // get exports by hash and store the their virtual address
     //kernel32
-    let loadlibrarya_hash = get_exports_by_hash(kernel32_base, LOADLIBRARYA_HASH).expect("failed to get LoadLibraryA by hash");
-    println!("[+] LoadLibraryA {:?}", loadlibrarya_hash);
+    let loadlibrarya_address = get_exports_by_hash(kernel32_base, LOADLIBRARYA_HASH).expect("failed to get LoadLibraryA by hash");
+    unsafe { LOAD_LIBRARY_A = Some(transmute::<_, fnLoadLibraryA>(loadlibrarya_address)) };
+    println!("[+] LoadLibraryA {:?}", loadlibrarya_address);
 
-    let getprocaddress_hash = get_exports_by_hash(kernel32_base, GETPROCADDRESS_HASH).expect("failed to get GetProcAddress by hash");
-    println!("[+] GetProcAddress {:?}", getprocaddress_hash);
+    let getprocaddress_address = get_exports_by_hash(kernel32_base, GETPROCADDRESS_HASH).expect("failed to get GetProcAddress by hash");
+    unsafe { GET_PROC_ADDRESS = Some(transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
+    println!("[+] GetProcAddress {:?}", getprocaddress_address);
 
-    let virtualalloc_hash = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
-    println!("[+] VirtualAlloc {:?}", virtualalloc_hash);
+    //let virtualalloc_address = get_exports_by_hash(kernel32_base, VIRTUALALLOC_HASH).expect("failed to get VirtualAlloc by hash");
+    //unsafe { VIRTUAL_ALLOC = Some(transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
+    //println!("[+] VirtualAlloc {:?}", virtualalloc_address);
 
     //ntdll
-    let ntflushinstructioncache_hash = get_exports_by_hash(ntdll_base, NTFLUSHINSTRUCTIONCACHE_HASH).expect("failed to get NtFlushInstructionCache by hash");
-    println!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_hash);
-
+    let ntflushinstructioncache_address = get_exports_by_hash(ntdll_base, NTFLUSHINSTRUCTIONCACHE_HASH).expect("failed to get NtFlushInstructionCache by hash");
+    unsafe { NT_FLUSH_INSTRUCTION_CACHE = Some(transmute::<_, fnNtFlushInstructionCache>(ntflushinstructioncache_address)) };
+    println!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_address);
 
     // STEP 2: load our image into a new permanent location in memory...
     let local_image = copy_sections_to_local_process(library_address);
     println!("[+] Local Image: {:p}", local_image.as_ptr());
 
     // STEP 4: process our images import table...
-
+    unsafe { resolve_imports(local_image.as_ptr()) };
 
     pause();
+}
+
+/// Resolve the image imports
+unsafe fn resolve_imports(local_image: *const u8) {
+
+    let dos_header = local_image as PIMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = unsafe { (*dos_header).e_lfanew as PIMAGE_NT_HEADERS32 };
+
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = (local_image as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+
+    // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
+    let mut import_directory = (local_image as usize 
+        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
+
+    while (*import_directory).Name != 0 {
+        
+        // Get the name of the dll in the current _IMAGE_IMPORT_DESCRIPTOR
+        let dll_name = (local_image as usize 
+            + (*import_directory).Name as usize) as *const i8;
+        
+        // Load the DLL in the in the address space of the process
+        let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name); //call function pointer LOAD_LIBRARY_A
+        
+        // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
+        #[cfg(target_arch = "x86")]
+        let mut original_first_thunk = (local_image as usize 
+            + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA32;
+
+        // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
+        #[cfg(target_arch = "x86_64")]
+        let mut original_first_thunk = (local_image as usize 
+            + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA64;
+
+        // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
+        #[cfg(target_arch = "x86")]
+        let mut thunk = (local_image as usize 
+            + (*import_directory).FirstThunk as usize) 
+            as PIMAGE_THUNK_DATA32;
+        
+        // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
+        #[cfg(target_arch = "x86_64")]
+        let mut thunk = (local_image as usize 
+            + (*import_directory).FirstThunk as usize) 
+            as PIMAGE_THUNK_DATA64;
+ 
+        
+        while (*original_first_thunk).u1.Function() != &0 {
+            
+            // Get a pointer to _IMAGE_IMPORT_BY_NAME
+            let thunk_data = (local_image as usize
+                + *(*original_first_thunk).u1.AddressOfData() as usize)
+                as PIMAGE_IMPORT_BY_NAME;
+
+            #[cfg(target_arch = "x86")]
+            // #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
+            let result = IMAGE_SNAP_BY_ORDINAL32(*(*original_first_thunk).u1.Ordinal());
+
+            // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0)
+            #[cfg(target_arch = "x86_64")]
+            let result = IMAGE_SNAP_BY_ORDINAL64(*(*original_first_thunk).u1.Ordinal());
+
+            if result {
+                //#define IMAGE_ORDINAL32(Ordinal) (Ordinal & 0xffff)
+                #[cfg(target_arch = "x86")]
+                let fn_ordinal = IMAGE_ORDINAL32(*(*original_first_thunk).u1.Ordinal()) as _;
+
+                //#define IMAGE_ORDINAL64(Ordinal) (Ordinal & 0xffff)
+                #[cfg(target_arch = "x86_64")]
+                let fn_ordinal = IMAGE_ORDINAL64(*(*original_first_thunk).u1.Ordinal()) as _;
+
+                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal) as _; // call function pointer GET_PROC_ADDRESS
+            } else {
+                // Get a pointer to the function name in the IMAGE_IMPORT_BY_NAME
+                let fn_name = (*thunk_data).Name.as_ptr();
+                // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in the IMAGE_THUNK_DATA64
+                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_name) as _; // call function pointer GET_PROC_ADDRESS
+            }
+
+            // Increment Thunk and OriginalFirstThunk
+            thunk = thunk.offset(1);
+            original_first_thunk = original_first_thunk.offset(1);
+        }
+
+        // Get a pointer to the next _IMAGE_IMPORT_DESCRIPTOR
+        import_directory = (import_directory as usize + size_of::<IMAGE_IMPORT_DESCRIPTOR>() as usize) as _;
+    }
 }
 
 /// Copy sections of the dll to a memory location in local process (heap) and does not use VirtualAlloc or HeapAlloc
@@ -105,7 +246,7 @@ fn copy_sections_to_local_process(library_address: usize) -> Vec<u8> {
     let dos_header = library_address as PIMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = unsafe { (*dos_header).e_lfanew as PIMAGE_NT_HEADERS32 };
+    let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32 };
 
     #[cfg(target_arch = "x86_64")]
     let nt_headers = unsafe { (library_address + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
@@ -166,6 +307,10 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
     
     let dos_header = module_base as PIMAGE_DOS_HEADER;
 
+    #[cfg(target_arch = "x86")]
+    let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+
+    #[cfg(target_arch = "x86_64")]
     let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
 
     let export_directory = (module_base as usize
@@ -192,7 +337,7 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
         (*export_directory).NumberOfNames as _,
     );
 
-    println!("[+] Module Base: {:?} Export Directory: {:?} AddressOfNames: {names:p}, AddressOfFunctions: {functions:p}, AddressOfNameOrdinals: {ordinals:p} ", module_base, export_directory);
+    //println!("[+] Module Base: {:?} Export Directory: {:?} AddressOfNames: {names:p}, AddressOfFunctions: {functions:p}, AddressOfNameOrdinals: {ordinals:p} ", module_base, export_directory);
 
     for i in 0..(*export_directory).NumberOfNames {
 

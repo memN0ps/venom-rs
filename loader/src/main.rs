@@ -3,6 +3,6 @@
 mod loader;
 
 fn main() {
-    println!("Hello, world!");
+    println!("Reflective DLL Injection");
     loader::reflective_loader();
 }
