@@ -453,11 +453,14 @@ pub unsafe fn get_loaded_module_by_hash(ldr: *mut PEB_LDR_DATA, hash: u32) -> Op
 	None
 }
 
-/* 
 unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize {
+    
     let dos_header = module_base as PIMAGE_DOS_HEADER;
 
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS;
+    #[cfg(target_arch = "x86")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
 
     let ref_nt_headers = &*nt_headers;
 
@@ -481,7 +484,7 @@ unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize 
     }
 
     return 0;
-}*/
+}
 
 //https://github.com/Ben-Lichtman/reloader/blob/7d4e82b64f0ee6bf56dec47153721f62e207faa7/src/helpers.rs#L18
 pub const fn fnv1a_hash_32_wstr(wchars: &[u16]) -> u32 {
