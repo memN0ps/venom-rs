@@ -74,7 +74,7 @@ fn main() {
 
     let reflective_loader = remote_image as usize + (loader_address as usize - module_base); // module_base minus to get the offset
     log::info!("[+] Remote Reflective Loader Address/offset: {:#x}", reflective_loader);
-    //pause();
+    pause();
 
     // Create remote thread and execute our shellcode
     let thread_handle = unsafe { 
@@ -101,18 +101,17 @@ fn main() {
     let get_peb_ldr = get_exports_by_name(module_base as _, "get_peb_ldr".to_owned()).expect("Failed to find export");
     log::info!("[+] get_peb_ldr: {:#x}", remote_image as usize + (get_peb_ldr as usize - module_base));
 
-    let set_exported_functions_by_hash = get_exports_by_name(module_base as _, "set_exported_functions_by_hash".to_owned()).expect("Failed to find export");
-    log::info!("[+] set_exported_functions_by_hash: {:#x}", remote_image as usize + (set_exported_functions_by_hash as usize - module_base));
+    let set_exported_functions_by_name = get_exports_by_name(module_base as _, "set_exported_functions_by_name".to_owned()).expect("Failed to find export");
+    log::info!("[+] set_exported_functions_by_name: {:#x}", remote_image as usize + (set_exported_functions_by_name as usize - module_base));
 
-
-    let get_exports_by_hash = get_exports_by_name(module_base as _, "get_exports_by_hash".to_owned()).expect("Failed to find export");
-    log::info!("[+] get_exports_by_hash: {:#x}", remote_image as usize + (get_exports_by_hash as usize - module_base));
+    let get_exports_by_name_address = get_exports_by_name(module_base as _, "get_exports_by_name".to_owned()).expect("Failed to find export");
+    log::info!("[+] get_exports_by_name: {:#x}", remote_image as usize + (get_exports_by_name_address as usize - module_base));
 
     let get_module_exports = get_exports_by_name(module_base as _, "get_module_exports".to_owned()).expect("Failed to find export");
     log::info!("[+] get_module_exports: {:#x}", remote_image as usize + (get_module_exports as usize - module_base));
 
-    let get_loaded_module_by_hash = get_exports_by_name(module_base as _, "get_loaded_module_by_hash".to_owned()).expect("Failed to find export");
-    log::info!("[+] get_loaded_module_by_hash: {:#x}", remote_image as usize + (get_loaded_module_by_hash as usize - module_base));
+    let get_loaded_modules_by_name = get_exports_by_name(module_base as _, "get_loaded_modules_by_name".to_owned()).expect("Failed to find export");
+    log::info!("[+] get_loaded_modules_by_name: {:#x}", remote_image as usize + (get_loaded_modules_by_name as usize - module_base));
 
     let copy_sections_to_local_process = get_exports_by_name(module_base as _, "copy_sections_to_local_process".to_owned()).expect("Failed to find export");
     log::info!("[+] copy_sections_to_local_process: {:#x}", remote_image as usize + (copy_sections_to_local_process as usize - module_base));
