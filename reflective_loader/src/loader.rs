@@ -63,11 +63,8 @@ pub extern "system" fn reflective_loader(dll_bytes: *mut c_void) {
     let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
     //log::info!("[+] IMAGE_NT_HEADERS: {:?}", nt_headers);
 
-    let peb_ldr = get_peb_ldr() as *mut PEB_LDR_DATA;
-    //log::info!("[+] PEB_LDR_DATA {:?}", peb_ldr);
-
     //LOAD_LIBRARY_A, GET_PROC_ADDRESS, VIRTUAL_ALLOC, NT_FLUSH_INSTRUCTION_CACHE
-    set_exported_functions_by_name(peb_ldr);
+    set_exported_functions_by_name();
 
     //log::info!("[+] Copying Sections");
     let new_module_base = unsafe { copy_sections_to_local_process(module_base) };
@@ -351,16 +348,19 @@ fn get_peb_ldr() -> usize {
 
 /// Gets the modules and module exports by name and saves their addresses
 #[no_mangle]
-pub fn set_exported_functions_by_name(peb_ldr: *mut PEB_LDR_DATA) {
+pub fn set_exported_functions_by_name() {
+
+    let kernel32_unicode = create_unicode_string(obfstr::wide!("KERNEL32.DLL"));
+    let ntdll_unicode = create_unicode_string(obfstr::wide!("ntdll.dll"));
+
     // get kernel32 base address via name
-    let kernel32_base = unsafe { get_loaded_modules_by_name(peb_ldr, "kernel32.dll").expect("failed to kernel32 by name") };
+    let kernel32_base = unsafe { get_loaded_modules_by_name(kernel32_unicode).expect("failed to kernel32 by name") };
     //log::info!("[+] KERNEL32: {:?}", kernel32_base);
     
     // get ntdll base address via name
-    let ntdll_base = unsafe { get_loaded_modules_by_name(peb_ldr, "ntdll.dll").expect("failed to get ntdll by name") };
+    let ntdll_base = unsafe { get_loaded_modules_by_name(ntdll_unicode).expect("failed to ntdll by name") };
     //log::info!("[+] NTDLL: {:?}", ntdll_base);
 
-    unsafe { asm!("int3") };
     // get exports by name and store the their virtual address
     //kernel32
     let loadlibrarya_address = get_exports_by_name(kernel32_base, "LoadLibraryA").expect("failed to get LoadLibraryA by name");
@@ -453,24 +453,75 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
 
 /// Gets loaded modules by name
 #[no_mangle]
-pub unsafe fn get_loaded_modules_by_name(ldr: *mut PEB_LDR_DATA, module_name: &str) -> Option<*mut u8> {
-	let mut module_list = (*ldr).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
+pub unsafe fn get_loaded_modules_by_name(module_name: UNICODE_STRING) -> Option<*mut u8> {
+    let peb_ptr_ldr_data = get_peb_ldr() as *mut PEB_LDR_DATA;
+    //log::info!("[+] PEB_LDR_DATA {:?}", peb_ptr_ldr_data);
+	
+    let mut ldr_data_ptr = (*peb_ptr_ldr_data).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
 
-    while !(*module_list).DllBase.is_null() {
+    while !ldr_data_ptr.is_null() {
 
-		let dll_name_wstr = core::slice::from_raw_parts((*module_list).BaseDllName.Buffer, (*module_list).BaseDllName.Length as usize / 2);
-        let dll_name = String::from_utf16(dll_name_wstr).unwrap();
-        //log::info!("dll_name: {:?}", dll_name);
+        let dll_name = (*ldr_data_ptr).BaseDllName;
+        let dll_buffer = (*ldr_data_ptr).BaseDllName.Buffer;
 
-		if dll_name.to_uppercase() == module_name.to_uppercase() {
+        if dll_buffer.is_null() {
             break;
-		}
+        }
 
-        module_list = (*module_list).InLoadOrderLinks.Flink as PLDR_DATA_TABLE_ENTRY;
+        let dll_name_wstr = core::slice::from_raw_parts(dll_buffer, dll_name.Length as usize / 2);
+
+        //log::info!("[+] {:?}", String::from_utf16_lossy(dll_name_wstr));
+
+        let module_name_wsr = core::slice::from_raw_parts(module_name.Buffer, module_name.Length as usize / 2);
+        
+        //crash is before this. nops used for debugging.
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+
+        if dll_name_wstr != module_name_wsr {
+            ldr_data_ptr = (*ldr_data_ptr).InLoadOrderLinks.Flink as PLDR_DATA_TABLE_ENTRY;
+            continue;
+		}
+    
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+        asm!("nop");
+
+        return Some((*ldr_data_ptr).DllBase as _);
 	}
 
-	return Some((*module_list).DllBase as _);
+    return None;
 }
+
+/*
+/// Compares a UNICODE_STRING (*mut 16) with a slice and returns true if equal
+fn is_equal(pointer: *mut u16, length: usize, against: &str) -> bool {
+    // Create slice not including the null-terminator
+    let slice = unsafe { std::slice::from_raw_parts(pointer, length -1) };
+    slice.iter().zip(against.encode_utf16()).all(|(a, b)| *a == b)
+} */
+
+
+use winapi::shared::ntdef::UNICODE_STRING;
+
+pub fn create_unicode_string(s: &[u16]) -> UNICODE_STRING {
+    let len = s.len();
+
+    let n = if len > 0 && s[len - 1] == 0 { len - 1 } else { len };
+
+    UNICODE_STRING {
+        Length: (n * 2) as u16,
+        MaximumLength: (len * 2) as u16,
+        Buffer: s.as_ptr() as _,
+    }
+}
+
 
 /* 
 /// Relative Virtual Address to file offset pointer

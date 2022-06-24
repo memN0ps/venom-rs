@@ -9,7 +9,7 @@ fn main() {
     log::info!("[+] Process ID: {:}", process_id);
 
     // Start madness
-    let dll_bytes = include_bytes!("C:\\Users\\User\\Documents\\GitHub\\shellcode_reflective_dll_injection-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
+    let dll_bytes = include_bytes!("C:\\Users\\User\\Documents\\GitHub\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
     
     let module_base = dll_bytes.as_ptr() as usize;
     let dos_header = module_base as PIMAGE_DOS_HEADER;
