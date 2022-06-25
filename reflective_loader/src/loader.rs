@@ -201,79 +201,72 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
     let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
 
     // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
-    let mut import_directory = (new_module_base as usize 
-        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
+    let mut import_directory = (new_module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
     
     //log::info!("[+] IMAGE_IMPORT_DESCRIPTOR {:?}", import_directory);
 
-    while (*import_directory).Name != 0 {
+    while (*import_directory).Name != 0x0 {
 
         // Get the name of the dll in the current _IMAGE_IMPORT_DESCRIPTOR
-        let dll_name = (new_module_base as usize 
-            + (*import_directory).Name as usize) as *const i8;        
+        let dll_name = (new_module_base as usize + (*import_directory).Name as usize) as *const i8;        
         
-            // Load the DLL in the in the address space of the process
-        let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name); //call function pointer LOAD_LIBRARY_A
+        // Load the DLL in the in the address space of the process by calling the function pointer LoadLibraryA
+        let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name);
 
-        // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
-        #[cfg(target_arch = "x86")]
-        let mut original_first_thunk = (new_module_base as usize 
-            + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA32;
-
-        // Get a pointer to the OriginalFirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
-        #[cfg(target_arch = "x86_64")]
-        let mut original_first_thunk = (new_module_base as usize 
-            + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA64;
-
-        // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
-        #[cfg(target_arch = "x86")]
-        let mut thunk = (new_module_base as usize 
-            + (*import_directory).FirstThunk as usize) 
-            as PIMAGE_THUNK_DATA32;
-        
-        // Get a pointer to the FirstThunk in the current _IMAGE_IMPORT_DESCRIPTOR
-        #[cfg(target_arch = "x86_64")]
-        let mut thunk = (new_module_base as usize 
-            + (*import_directory).FirstThunk as usize) 
-            as PIMAGE_THUNK_DATA64;
- 
-        while (*original_first_thunk).u1.Function() != &0 {
-            // Get a pointer to _IMAGE_IMPORT_BY_NAME
-            let thunk_data = (new_module_base as usize
-                + *(*original_first_thunk).u1.AddressOfData() as usize)
-                as PIMAGE_IMPORT_BY_NAME;
-
+        // Get a pointer to the Original Thunk or First Thunk via OriginalFirstThunk or FirstThunk 
+        let mut original_thunk = if (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) != 0 {
             #[cfg(target_arch = "x86")]
-            // #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
-            let result = IMAGE_SNAP_BY_ORDINAL32(*(*original_first_thunk).u1.Ordinal());
-
-            // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0)
+            let orig_thunk = (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA32;
             #[cfg(target_arch = "x86_64")]
-            let result = IMAGE_SNAP_BY_ORDINAL64(*(*original_first_thunk).u1.Ordinal());
+            let orig_thunk = (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA64;
 
-            if result {
-                //#define IMAGE_ORDINAL32(Ordinal) (Ordinal & 0xffff)
+            orig_thunk
+        } else {
+            #[cfg(target_arch = "x86")]
+            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA32;
+            #[cfg(target_arch = "x86_64")]
+            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA64;
+
+            thunk
+        };
+
+        #[cfg(target_arch = "x86")]
+        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA32;
+        #[cfg(target_arch = "x86_64")]
+        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA64;
+ 
+        while (*original_thunk).u1.Function() != &0 {
+            // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0) or #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
+            #[cfg(target_arch = "x86")]
+            let snap_result = IMAGE_SNAP_BY_ORDINAL32(*(*original_thunk).u1.Ordinal());
+            #[cfg(target_arch = "x86_64")]
+            let snap_result = IMAGE_SNAP_BY_ORDINAL64(*(*original_thunk).u1.Ordinal());
+
+            if snap_result {
+                //#define IMAGE_ORDINAL32(Ordinal) (Ordinal & 0xffff) or #define IMAGE_ORDINAL64(Ordinal) (Ordinal & 0xffff)
                 #[cfg(target_arch = "x86")]
-                let fn_ordinal = IMAGE_ORDINAL32(*(*original_first_thunk).u1.Ordinal()) as _;
-
-                //#define IMAGE_ORDINAL64(Ordinal) (Ordinal & 0xffff)
+                let fn_ordinal = IMAGE_ORDINAL32(*(*original_thunk).u1.Ordinal()) as _;
                 #[cfg(target_arch = "x86_64")]
-                let fn_ordinal = IMAGE_ORDINAL64(*(*original_first_thunk).u1.Ordinal()) as _;
+                let fn_ordinal = IMAGE_ORDINAL64(*(*original_thunk).u1.Ordinal()) as _;
 
-                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal) as _; // call function pointer GET_PROC_ADDRESS
+                // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in IMAGE_THUNK_DATA by calling function pointer GetProcAddress by ordinal
+                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal) as _; 
             } else {
+                // Get a pointer to _IMAGE_IMPORT_BY_NAME
+                let thunk_data = (new_module_base as usize + *(*original_thunk).u1.AddressOfData() as usize) as PIMAGE_IMPORT_BY_NAME;
+
                 // Get a pointer to the function name in the IMAGE_IMPORT_BY_NAME
                 let fn_name = (*thunk_data).Name.as_ptr();
-                // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in the IMAGE_THUNK_DATA64
-                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_name) as _; // call function pointer GET_PROC_ADDRESS
+                // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in IMAGE_THUNK_DATA by calling function pointer GetProcAddress by name
+                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_name) as _; // 
             }
 
-            // Increment Thunk and OriginalFirstThunk
-            thunk = thunk.offset(1);
-            original_first_thunk = original_first_thunk.offset(1);
+            // Increment and get a pointer to the next Thunk and Original Thunk
+            original_thunk = original_thunk.add(1);
+            thunk = thunk.add(1);
         }
 
-        // Get a pointer to the next _IMAGE_IMPORT_DESCRIPTOR
+        // Increment and get a pointer to the next _IMAGE_IMPORT_DESCRIPTOR
         import_directory = (import_directory as usize + size_of::<IMAGE_IMPORT_DESCRIPTOR>() as usize) as _;
     }
 }
