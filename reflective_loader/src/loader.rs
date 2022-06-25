@@ -208,8 +208,8 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
     while (*import_directory).Name != 0x0 {
 
         // Get the name of the dll in the current _IMAGE_IMPORT_DESCRIPTOR
-        let dll_name = (new_module_base as usize + (*import_directory).Name as usize) as *const i8;        
-        
+        let dll_name = (new_module_base as usize + (*import_directory).Name as usize) as *const i8;
+
         // Load the DLL in the in the address space of the process by calling the function pointer LoadLibraryA
         let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name);
 
@@ -235,7 +235,7 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
         #[cfg(target_arch = "x86_64")]
         let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA64;
  
-        while (*original_thunk).u1.Function() != &0 {
+        while *(*original_thunk).u1.Function() != 0 {
             // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0) or #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
             #[cfg(target_arch = "x86")]
             let snap_result = IMAGE_SNAP_BY_ORDINAL32(*(*original_thunk).u1.Ordinal());
@@ -262,8 +262,8 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
             }
 
             // Increment and get a pointer to the next Thunk and Original Thunk
-            original_thunk = original_thunk.add(1);
             thunk = thunk.add(1);
+            original_thunk = original_thunk.add(1);
         }
 
         // Increment and get a pointer to the next _IMAGE_IMPORT_DESCRIPTOR
