@@ -11,15 +11,16 @@ Development is in progress.
     * Frees memory using `VirtualFree` after calling DllMain
 * Remove DOS header and NT headers (TODO)
 * Use `LdrLoadDll`, `NtAllocateVirtualMemory`, `NtProtectVirtualMemory` (TODO)
+* Convert to Shellcode Reflective DLL Injection / SRDI (TODO)
 
 
 ## Other names
 
 * Reflective DLL Injection
 * Shellcode Reflective DLL Injection
-* Reflective PE Injection
+* Reflective Portable Executable Injection (Reflective Injection)
 * Portable Executable Reflection (PE Reflection)
-* Portable Executable (PE Injection)
+* Portable Executable Injection (PE Injection)
 * Manual Mapping (very very similar to manual mapping)
 
 ## References and Credits
