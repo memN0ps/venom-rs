@@ -1,4 +1,4 @@
-# Shellcode Reflective DLL Injection (sRDI) / Portable Executable Reflection (PE Reflection)
+# Shellcode Reflective DLL Injection (sRDI)
 
 Development is in progress.
 
@@ -10,7 +10,17 @@ Development is in progress.
     * Sets memory protection for each section manually
     * Frees memory using `VirtualFree` after calling DllMain
 * Remove DOS header and NT headers (TODO)
-* Use LdrLoadDll, NtAllocateVirtualMemory, NtProtectVirtualMemory (ToDo)
+* Use `LdrLoadDll`, `NtAllocateVirtualMemory`, `NtProtectVirtualMemory` (TODO)
+
+
+## Other names
+
+* Reflective DLL Injection
+* Shellcode Reflective DLL Injection
+* Reflective PE Injection
+* Portable Executable Reflection (PE Reflection)
+* Portable Executable (PE Injection)
+* Manual Mapping (very very similar to manual mapping)
 
 ## References and Credits
 

@@ -21,7 +21,7 @@ fn main() {
     let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
     log::info!("[+] IMAGE_NT_HEADERS: {:?}", nt_headers);
 
-    let loader_address = get_exports_by_name(module_base as _, "reflective_loader".to_owned()).expect("Failed to find export");
+    let loader_address = get_exports_by_name(module_base as _, "memn0ps_loader".to_owned()).expect("Failed to find export");
     log::info!("[+] Local Reflective Loader Address/offset: {:?}", loader_address);
     // End dll madness
 
