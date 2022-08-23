@@ -1,9 +1,8 @@
-#![feature(const_char_convert)]
-
 mod loader;
 
 use winapi::shared::minwindef::{BOOL, DWORD, HINSTANCE, LPVOID, TRUE};
-use winapi::um::winnt::DLL_PROCESS_ATTACH;
+use winapi::um::memoryapi::VirtualFree;
+use winapi::um::winnt::{DLL_PROCESS_ATTACH, MEM_RELEASE};
 use winapi::um::winuser::MessageBoxA;
 
 #[no_mangle]
@@ -14,6 +13,8 @@ pub unsafe extern "system" fn DllMain(
     _reserved: LPVOID,
 ) -> BOOL {
     if call_reason == DLL_PROCESS_ATTACH {
+        // Cleanup RWX region (thread)
+        VirtualFree(_reserved, 0, MEM_RELEASE);
         MessageBoxA(
             0 as _,
             "Rust DLL injected!\0".as_ptr() as _,
