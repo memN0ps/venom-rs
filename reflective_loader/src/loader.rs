@@ -81,7 +81,7 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
         return;
     }
 
-    // 2) Allocate memory and copy sections and headers into the newly allocated memory
+    // 2) Allocate memory and copy sections into the newly allocated memory
     
     //log::info!("[+] Copying Sections");
     let new_module_base = unsafe { copy_sections_to_local_process(module_base) };
@@ -91,17 +91,17 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
         return;
     }
 
-    unsafe { copy_headers(module_base as _, new_module_base) };
+    //unsafe { copy_headers(module_base as _, new_module_base) };
 
 
     // 3) Process images relocations
 
     //log::info!("[+] Rebasing Image");
-    unsafe { rebase_image(module_base, new_module_base) };
+    unsafe { rebase_image(module_base as _, new_module_base) };
 
     // 4) Process image import table
     //log::info!("[+] Resolving Imports");
-    unsafe { resolve_imports(new_module_base as _) };
+    unsafe { resolve_imports(module_base as _, new_module_base) };
 
 
     // 5) Set protection for each section
@@ -173,7 +173,7 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
 
 /// Rebase the image / perform image base relocation
 #[no_mangle]
-unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
+unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
 
     let dos_header = module_base as PIMAGE_DOS_HEADER;
 
@@ -194,12 +194,14 @@ unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
     // Calcuate the dos/nt headers of new_module_base
     // Resolve the imports of the newly allocated memory region 
 
+    /* 
     let dos_header = new_module_base as PIMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
     let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
     let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    */
 
     // Get a pointer to the first _IMAGE_BASE_RELOCATION
     let mut base_relocation = (new_module_base as usize 
@@ -238,13 +240,13 @@ unsafe fn rebase_image(module_base: usize, new_module_base: *mut c_void) {
 
 /// Resolve the image imports
 #[no_mangle]
-unsafe fn resolve_imports(new_module_base: *mut c_void) {
-    let dos_header = new_module_base as PIMAGE_DOS_HEADER;
+unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void) {
+    let dos_header = module_base as PIMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
 
     // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
     let mut import_directory = (new_module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
@@ -317,6 +319,7 @@ unsafe fn resolve_imports(new_module_base: *mut c_void) {
     }
 }
 
+/* 
 /// Copy headers into the target memory location
 #[no_mangle]
 unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
@@ -331,7 +334,7 @@ unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
         new_module_base.cast::<u8>().add(i as usize).write(module_base.add(i as usize).read());
     }
 
-}
+}*/
 
 // Copy sections of the dll to a memory location
 #[no_mangle]

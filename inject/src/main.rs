@@ -9,7 +9,7 @@ fn main() {
     log::info!("[+] Process ID: {:}", process_id);
 
     // Start madness
-    let dll_bytes = include_bytes!("X:\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
+    let dll_bytes = include_bytes!("Z:\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
     
     let module_base = dll_bytes.as_ptr() as usize;
     let dos_header = module_base as PIMAGE_DOS_HEADER;
@@ -116,8 +116,8 @@ fn main() {
     let copy_sections_to_local_process = get_exports_by_name(module_base as _, "copy_sections_to_local_process".to_owned()).expect("Failed to find export");
     log::info!("[+] copy_sections_to_local_process: {:#x}", remote_image as usize + (copy_sections_to_local_process as usize - module_base));
 
-    let copy_headers = get_exports_by_name(module_base as _, "copy_headers".to_owned()).expect("Failed to find export");
-    log::info!("[+] copy_headers: {:#x}", remote_image as usize + (copy_headers as usize - module_base));
+    //let copy_headers = get_exports_by_name(module_base as _, "copy_headers".to_owned()).expect("Failed to find export");
+    //log::info!("[+] copy_headers: {:#x}", remote_image as usize + (copy_headers as usize - module_base));
 
     let rebase_image = get_exports_by_name(module_base as _, "rebase_image".to_owned()).expect("Failed to find export");
     log::info!("[+] rebase_image: {:#x}", remote_image as usize + (rebase_image as usize - module_base));
