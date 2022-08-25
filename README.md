@@ -17,10 +17,10 @@ Development is in progress.
 
 * Reflective DLL Injection
 * Shellcode Reflective DLL Injection
-* Reflective Portable Executable Injection (Reflective Injection)
+* Reflective Portable Executable Injection (Reflective PE Injection)
 * Portable Executable Reflection (PE Reflection)
 * Portable Executable Injection (PE Injection)
-* Manual Mapping (very very similar to manual mapping)
+* Manual Mapping. It's very very similar to manual mapping, matter of internal (DLL) vs external (exe) and few other things
 
 ## References and Credits
 
