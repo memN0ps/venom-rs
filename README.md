@@ -1,26 +1,4 @@
-# Shellcode Reflective DLL Injection (sRDI)
-
-Development is in progress.
-
-## Features
-
-* x86_64 and x86 support
-* Gets modules and exports by name not hash
-* Uses `PAGE_READWRITE` to copy sections and headers (avoids RWX)
-    * Sets memory protection for each section manually
-* Frees allocated memory by the loader using `VirtualFree` after calling DllMain
-* DOS and NT headers are never copied into the newly allocated memory
-* Convert to Shellcode Reflective DLL Injection / SRDI (TODO)
-
-
-## Other names
-
-* Reflective DLL Injection
-* Shellcode Reflective DLL Injection
-* Reflective Portable Executable Injection (Reflective PE Injection)
-* Portable Executable Reflection (PE Reflection)
-* Portable Executable Injection (PE Injection)
-* Manual Mapping. It's very very similar to manual mapping, matter of internal (DLL) vs external (exe) and few other things
+# Reflective DLL Injection (RDI)
 
 ## References and Credits
 
