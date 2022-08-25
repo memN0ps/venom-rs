@@ -1,4 +1,4 @@
-# Reflective DLL Injection (RDI)
+# Portable Executable Injection (PE Injection) / Reflective DLL Injection (RDI)
 
 ## References and Credits
 
