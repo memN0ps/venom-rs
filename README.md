@@ -1,4 +1,6 @@
-# Portable Executable Injection (PE Injection) / Reflective DLL Injection (RDI)
+# Shellcode Reflective DLL Injection (sRDI)
+
+Development in progress
 
 ## References and Credits
 
