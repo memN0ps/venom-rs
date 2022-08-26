@@ -502,6 +502,7 @@ pub unsafe fn get_loaded_modules_by_name(module_name: *const u16) -> *mut u8 {
     return std::ptr::null_mut();
 }
 
+//Thanks 2vg
 use num_traits::Num;
 pub fn compare_raw_str<T>(s: *const T, u: *const T) -> bool
 where

