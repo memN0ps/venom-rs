@@ -1,16 +1,14 @@
-mod loader;
+use std::ffi::c_void;
+use windows_sys::Win32::{System::{Memory::{MEM_RELEASE, VirtualFree}, SystemServices::DLL_PROCESS_ATTACH}, Foundation::{HINSTANCE, BOOL}, UI::WindowsAndMessaging::MessageBoxA};
 
-use winapi::shared::minwindef::{BOOL, DWORD, HINSTANCE, LPVOID, TRUE};
-use winapi::um::memoryapi::VirtualFree;
-use winapi::um::winnt::{DLL_PROCESS_ATTACH, MEM_RELEASE};
-use winapi::um::winuser::MessageBoxA;
+mod loader;
 
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "system" fn DllMain(
     _module: HINSTANCE,
-    call_reason: DWORD,
-    _reserved: LPVOID,
+    call_reason: u32,
+    _reserved: *mut c_void,
 ) -> BOOL {
     if call_reason == DLL_PROCESS_ATTACH {
         // Cleanup RWX region (thread)
@@ -22,8 +20,8 @@ pub unsafe extern "system" fn DllMain(
             0x0,
         );
 
-        TRUE
+        1
     } else {
-        TRUE
+        1
     }
 }

