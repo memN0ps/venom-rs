@@ -53,7 +53,7 @@ static mut FLUSH_INSTRUCTION_CACHE: Option<fnFlushInstructionCache> = None;
 
 /// Performs a Reflective DLL Injection
 #[no_mangle]
-pub extern "system" fn memn0ps_loader(dll_bytes: *mut c_void) {
+pub extern "system" fn reflective_loader(dll_bytes: *mut c_void) {
 
     let module_base = dll_bytes as usize;
 
