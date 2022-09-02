@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, ffi::{CStr}};
 use sysinfo::{Pid, SystemExt, ProcessExt};
 use windows_sys::Win32::{System::{SystemServices::{IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY, IMAGE_DOS_SIGNATURE}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_SECTION_HEADER}}};
 
+#[allow(dead_code)]
 /// Get process ID by name
 pub fn get_process_id_by_name(target_process: &str) -> Pid {
     let mut system = sysinfo::System::new();
@@ -76,6 +77,7 @@ pub unsafe fn get_module_exports(module_base: *mut u8) -> BTreeMap<String, usize
     exports
 }
 
+#[allow(dead_code)]
 pub unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> usize {
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
     
@@ -103,4 +105,35 @@ pub unsafe fn rva_to_file_offset_pointer(module_base: usize, mut rva: u32) -> us
         }
     }
     return 0;
+}
+
+pub unsafe fn get_section_pointer_and_size_by_name(module_base: usize, section_name: &str) -> (usize, usize) {
+    
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+
+    let section_header = (&(*nt_headers).OptionalHeader as *const _ as usize + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize) as *mut IMAGE_SECTION_HEADER;
+
+
+    for i in 0..(*nt_headers).FileHeader.NumberOfSections {
+        let section_header_i = &*(section_header.add(i as usize));
+
+        if let Ok(name) = CStr::from_ptr(section_header_i.Name.as_ptr() as _).to_str() {
+            if !(name.to_lowercase() == section_name.to_lowercase()) {
+                continue;
+            }
+        }
+
+        let source = module_base as usize + section_header_i.PointerToRawData as usize;
+        
+        let size = section_header_i.SizeOfRawData as usize;
+
+        return (source, size);
+    }
+
+    return (0, 0);
 }

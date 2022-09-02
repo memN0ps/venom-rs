@@ -1,7 +1,11 @@
 [package]
-name = "reflective_loader"
+name = "testdll"
 version = "0.1.0"
 edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["cdylib"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [profile.release]
@@ -10,21 +14,6 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations.
 panic = "abort"     # Abort on panic
 strip = true        # Automatically strip symbols from the binary.
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-ntapi = "0.3.7"
-wchar = "0.11.0"
-log = "0.4.17"
-env_logger = "0.9.0"
-obfstr = "0.3.0"
-utf16_literal = "0.2.1"
-
-[dependencies.num-traits]
-version = "0.2.15"
-default-features = false
 
 [dependencies.windows-sys]
 version = "0.36.1"

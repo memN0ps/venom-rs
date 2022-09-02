@@ -4,13 +4,14 @@ Development in progress
 
 ## References and Credits
 
+* https://www.netspi.com/blog/technical/adversary-simulation/srdi-shellcode-reflective-dll-injection/
+* https://github.com/monoxgas/sRDI
 * https://github.com/stephenfewer/ReflectiveDLLInjection/
 * https://discord.com/invite/rust-lang-community (Rust Community #windows-dev channel)
 * https://github.com/dismantl/ImprovedReflectiveDLLInjection
 * https://disman.tl/2015/01/30/an-improved-reflective-dll-injection-technique.html
 * https://bruteratel.com/research/feature-update/2021/06/01/PE-Reflection-Long-Live-The-King/
 * https://github.com/Cracked5pider/KaynLdr
-* https://github.com/monoxgas/sRDI
 * https://github.com/Ben-Lichtman/reloader/
 * https://github.com/not-matthias/mmap/
 * https://github.com/memN0ps/mmapper-rs
