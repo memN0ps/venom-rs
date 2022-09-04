@@ -1,7 +1,7 @@
 use std::{arch::asm, mem::size_of, ffi::c_void};
 use ntapi::{ntpebteb::PTEB, ntpsapi::PEB_LDR_DATA, ntldr::LDR_DATA_TABLE_ENTRY};
 use num_traits::Num;
-use windows_sys::{Win32::{Foundation::{HANDLE, HINSTANCE, FARPROC, BOOL}, System::{Memory::{VIRTUAL_ALLOCATION_TYPE, PAGE_PROTECTION_FLAGS, PAGE_WRITECOPY, PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, MEM_RESERVE, MEM_COMMIT, VirtualFree, MEM_RELEASE}, SystemServices::{IMAGE_DOS_HEADER, DLL_PROCESS_ATTACH, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGHLOW, IMAGE_IMPORT_DESCRIPTOR, IMAGE_ORDINAL_FLAG64, IMAGE_IMPORT_BY_NAME, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_SCN_MEM_WRITE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_EXPORT}, WindowsProgramming::IMAGE_THUNK_DATA64}}, core::PCSTR};
+use windows_sys::{Win32::{Foundation::{HANDLE, HINSTANCE, FARPROC, BOOL}, System::{Memory::{VIRTUAL_ALLOCATION_TYPE, PAGE_PROTECTION_FLAGS, PAGE_WRITECOPY, PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, MEM_RESERVE, MEM_COMMIT, VirtualFree, MEM_RELEASE}, SystemServices::{IMAGE_DOS_HEADER, DLL_PROCESS_ATTACH, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGHLOW, IMAGE_IMPORT_DESCRIPTOR, IMAGE_ORDINAL_FLAG64, IMAGE_IMPORT_BY_NAME, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_SCN_MEM_WRITE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_EXPORT}, WindowsProgramming::IMAGE_THUNK_DATA64, Threading::ExitThread}}, core::PCSTR};
 
 #[allow(non_camel_case_types)]
 type fnLoadLibraryA = unsafe extern "system" fn(
@@ -38,9 +38,6 @@ type fnVirtualProtect = unsafe extern "system" fn(
 ) -> BOOL;
 
 #[allow(non_camel_case_types)]
-type fnExitThread = unsafe extern "system" fn(dwexitcode: u32) -> !;
-
-#[allow(non_camel_case_types)]
 type fnDllMain = unsafe extern "system" fn(
     module: HINSTANCE,
     call_reason: u32,
@@ -53,7 +50,6 @@ static mut GET_PROC_ADDRESS: Option<fnGetProcAddress> = None;
 static mut VIRTUAL_ALLOC: Option<fnVirtualAlloc> = None;
 static mut VIRTUAL_PROTECT: Option<fnVirtualProtect> = None;
 static mut FLUSH_INSTRUCTION_CACHE: Option<fnFlushInstructionCache> = None;
-static mut EXIT_THREAD: Option<fnExitThread> = None;
 
 #[allow(non_camel_case_types)]
 type fnUserFunction = unsafe extern "system" fn(user_data: *mut c_void, _user_data_len: u32);
@@ -180,7 +176,7 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     unsafe { VirtualFree(module_base as _, 0, MEM_RELEASE) };
 
     // Exit the thread using the current exit code of the thread
-    unsafe { EXIT_THREAD.unwrap()(1) };
+    unsafe { ExitThread(1) };
 }
 
 
@@ -418,8 +414,7 @@ pub fn set_exported_functions_by_name() -> bool {
     let get_proc_address_bytes: [i8; 15] = [71, 101, 116, 80, 114, 111, 99, 65, 100, 100, 114, 101, 115, 115, 0];
     let virtual_alloc_bytes: [i8; 13] = [86, 105, 114, 116, 117, 97, 108, 65, 108, 108, 111, 99, 0];
     let virtual_protect_bytes: [i8; 15] = [86, 105, 114, 116, 117, 97, 108, 80, 114, 111, 116, 101, 99, 116, 0];
-    let flush_instruction_cache_bytes: [i8; 24] = [78, 116, 70, 108, 117, 115, 104, 73, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 67, 97, 99, 104, 101, 0];
-    let exit_thread_bytes: [i8; 11] = [69, 120, 105, 116, 84, 104, 114, 101, 97, 100, 0];
+    let flush_instruction_cache_bytes: [i8; 22] = [70, 108, 117, 115, 104, 73, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 67, 97, 99, 104, 101, 0];
 
     // get kernel32 base address via name
     let kernel32_base = unsafe { get_loaded_modules_by_name(kernel32_bytes.as_ptr()) };
@@ -455,11 +450,8 @@ pub fn set_exported_functions_by_name() -> bool {
     unsafe { FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnFlushInstructionCache>(flushinstructioncache_address)) };
     //log::info!("[+] FlushInstructionCache {:?}", flushinstructioncache_address);
 
-    let exit_thread_address = unsafe { get_module_exports(kernel32_base, exit_thread_bytes.as_ptr()) };
-    unsafe { EXIT_THREAD = Some(std::mem::transmute::<_, fnExitThread>(exit_thread_address)) };
-    //log::info!("[+] ExitThread {:?}", exit_thread_address);
 
-    if loadlibrarya_address == 0 || getprocaddress_address == 0 || virtualalloc_address == 0 || virtualprotect_address == 0 || flushinstructioncache_address == 0 || exit_thread_address == 0 {
+    if loadlibrarya_address == 0 || getprocaddress_address == 0 || virtualalloc_address == 0 || virtualprotect_address == 0 || flushinstructioncache_address == 0 {
         return false;
     }
 
