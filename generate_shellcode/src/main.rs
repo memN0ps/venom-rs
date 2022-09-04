@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, ffi::{CStr}};
 use windows_sys::Win32::{System::{SystemServices::{IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY, IMAGE_DOS_SIGNATURE}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_SECTION_HEADER, IMAGE_NT_OPTIONAL_HDR64_MAGIC}}};
 
 
-const BOOTSTRAP_TOTAL_LENGTH: u32 = 53; // THIS NEEDS TO CHANGE IF THE SHELLCODE BELOW CHANGES
+const BOOTSTRAP_TOTAL_LENGTH: u32 = 61; // THIS NEEDS TO CHANGE IF THE SHELLCODE BELOW CHANGES
 const REFLECTIVE_LOADER_NAME: &str = "reflective_loader"; // THIS NEEDS TO CHANGE IF THE REFLECTIVE LOADER FUNCTION NAME CHANGES
 
 fn main() {
@@ -70,12 +70,12 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     // Setup reflective loader parameters and call the function (rcx, rdx, r8, r9) 
     //reflective_loader(image_bytes: *mut c_void, user_function_hash: u32, user_data: *mut c_void, user_data_length: u32)
 
-    // mov r9, <Length of User Data> - copy the 4th parameter, which is the length of the user data into r9
+    // mov r9, <length of user data> - copy the 4th parameter, which is the length of the user data into r9
     bootstrap.push(0x41);
     bootstrap.push(0xb9);
     bootstrap.append(&mut user_data_length.to_le_bytes().to_vec().clone());
 
-    // add r8, <user function offset> + <Length of DLL> - copy the 3rd parameter, which is address of the user function into r8 after calculation
+    // add r8, <user function offset> + <length of DLL> - copy the 3rd parameter, which is address of the user function into r8 after calculation
     bootstrap.push(0x49);
     bootstrap.push(0x81);
     bootstrap.push(0xc0);
@@ -93,6 +93,20 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     let dll_offset = (BOOTSTRAP_TOTAL_LENGTH - 5) as u32 + reflective_loader_size as u32;
     bootstrap.append(&mut dll_offset.to_le_bytes().to_vec().clone());
 
+    // push rsi - save original value
+    bootstrap.push(0x56);
+
+    // mov rsi, rsp - store our current stack pointer for later
+    bootstrap.push(0x48);
+    bootstrap.push(0x89);
+    bootstrap.push(0xe6);
+
+    // and rsp, 0x0FFFFFFFFFFFFFFF0 - Align the stack to 16 bytes
+    bootstrap.push(0x48);
+    bootstrap.push(0x83);
+    bootstrap.push(0xe4);
+    bootstrap.push(0xf0);
+
     // sub rsp, 0x20 (32 bytes) - create shadow space on the stack is required for x64
     bootstrap.push(0x48);
     bootstrap.push(0x83);
@@ -107,11 +121,13 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0x90);
     bootstrap.push(0x90);
 
-    // add rsp, 0x20 (32 bytes) - restore our original stack pointer that was modified for shadow space
+    // mov rsp, rsi - Reset our original stack pointer
     bootstrap.push(0x48);
-    bootstrap.push(0x83);
-    bootstrap.push(0xC4);
-    bootstrap.push(0x20);
+    bootstrap.push(0x89);
+    bootstrap.push(0xf4);
+
+    // pop rsi - Put things back where we left them
+    bootstrap.push(0x5e);
 
     // ret - return to caller and resume execution flow (avoids crashing process)
     bootstrap.push(0xc3);
@@ -119,6 +135,29 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0x90);
     
     log::debug!("[+] Bootstrap Shellcode Length: {}", bootstrap.len());
+
+    /*
+    ; bootstrap shellcode
+        call 0x00
+        pop rcx
+        mov r8, rcx
+
+        mov r9, <length of user data>
+        add r8, <user function offset> + <length of DLL>
+        mov edx, <hash of function>
+        add rcx, <offset of dll>
+
+        push rsi
+        mov rsi, rsp
+        and rsp, 0x0FFFFFFFFFFFFFFF0
+        sub rsp, 0x20
+        
+        call <reflective loader address>
+
+        mov rsp, rsi
+        pop rsi
+        ret
+    */
 
     // This is what the shellcode looks like in memory:
 	// Bootstrap Shellcode

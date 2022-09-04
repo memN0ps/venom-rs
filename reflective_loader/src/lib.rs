@@ -52,7 +52,7 @@ static mut VIRTUAL_PROTECT: Option<fnVirtualProtect> = None;
 static mut FLUSH_INSTRUCTION_CACHE: Option<fnFlushInstructionCache> = None;
 
 #[allow(non_camel_case_types)]
-type fnUserFunction = unsafe extern "system" fn(user_data: *mut c_void, _user_data_len: u32);
+type fnUserFunction = unsafe extern "system" fn(a: *mut c_void, b: u32);
 static mut USER_FUNCTION: Option<fnUserFunction> = None;
 
 
@@ -166,17 +166,17 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     unsafe { DllMain(new_module_base as _, DLL_PROCESS_ATTACH, module_base as _) };
 
     // Make sure to add the arguments the reflective_loader and call the reflective loader.
-    let user_function = unsafe { get_module_exports_by_hash(new_module_base as _, user_function_hash) };
-    unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function)) };
+    //let user_function = unsafe { get_module_exports_by_hash(new_module_base as _, user_function_hash) };
+    //unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function)) };
 
     // Calling user function
-    unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
+    //unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
 
     //Since we have resolved imports, we can call these normally (testing VirtualFree for now, will do exit thread later)
-    unsafe { VirtualFree(module_base as _, 0, MEM_RELEASE) };
+    //unsafe { VirtualFree(module_base as _, 0, MEM_RELEASE) };
 
     // Exit the thread using the current exit code of the thread
-    unsafe { ExitThread(1) };
+    //unsafe { ExitThread(1) };
 }
 
 
