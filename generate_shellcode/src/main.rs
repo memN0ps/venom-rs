@@ -67,8 +67,7 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0xc8);
 
 
-    // Setup reflective loader parameters and call the function (rcx, rdx, r8, r9) 
-    //reflective_loader(image_bytes: *mut c_void, user_function_hash: u32, user_data: *mut c_void, user_data_length: u32)
+    // Setup reflective loader parameters and call the function
 
     // mov r9, <length of user data> - copy the 4th parameter, which is the length of the user data into r9
     bootstrap.push(0x41);
@@ -107,16 +106,16 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0xe4);
     bootstrap.push(0xf0);
 
-    // sub rsp, 0x20 (32 bytes) - create shadow space on the stack is required for x64
+    // sub rsp, 0x20 (32 bytes) - create shadow space on the stack, which is required for x64. A minimum of 32 bytes for rcx, rdx, r8, r9.
     bootstrap.push(0x48);
     bootstrap.push(0x83);
     bootstrap.push(0xec);
-    bootstrap.push(0x20);
+    bootstrap.push(4 * 8);
 
     // call <reflective loader address> - call the reflective loader address after calculation
     bootstrap.push(0xe8);
-    let skip_instruction = (BOOTSTRAP_TOTAL_LENGTH - bootstrap.len() as u32 - 4 as u32) + reflective_loader_offset as u32;
-    bootstrap.append(&mut skip_instruction.to_le_bytes().to_vec().clone());
+    let reflective_loader_address = (BOOTSTRAP_TOTAL_LENGTH - bootstrap.len() as u32 - 4 as u32) + reflective_loader_offset as u32;
+    bootstrap.append(&mut reflective_loader_address.to_le_bytes().to_vec().clone());
     bootstrap.push(0x90);
     bootstrap.push(0x90);
     bootstrap.push(0x90);
@@ -136,11 +135,13 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     
     log::debug!("[+] Bootstrap Shellcode Length: {}", bootstrap.len());
 
+
     /*
     ; bootstrap shellcode
         call 0x00
         pop rcx
         mov r8, rcx
+
 
         mov r9, <length of user data>
         add r8, <user function offset> + <length of DLL>
@@ -151,7 +152,7 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
         mov rsi, rsp
         and rsp, 0x0FFFFFFFFFFFFFFF0
         sub rsp, 0x20
-        
+
         call <reflective loader address>
 
         mov rsp, rsi
