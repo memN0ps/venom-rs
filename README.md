@@ -18,7 +18,7 @@ cargo build
 
 * Load required modules and exports by name
 * Allocate memory and copy sections into the newly allocated memory (`VirtualAlloc` uses `RW` not `RWX`)
-* Process images relocations (rebase image)
+* Process image relocations (rebase image)
 * Process image import table (resolve imports)
 * Set protection for each section (`VirtualProtect` uses only what is necessary)
 * Execute `DllMain` AND `USER_FUNCTION` (TODO USER_FUNCTION)
@@ -29,7 +29,7 @@ cd .\reflective_loader\
 cargo build
 ```
 
-3. Build `generate_shellcode` project. This is what the shellcode looks like in memory:
+3. Run `generate_shellcode` project. This is what the shellcode looks like in memory:
 
 ```
 -----------------------
@@ -45,11 +45,15 @@ cargo build
 
 ```
 cd .\generate_shellcode\
-cargo build
+cargo run
 ```
 
-4. Build `inject` or bring your own injector and inject `shellcode.bin`
+4. Run `inject` or bring your own injector and inject `shellcode.bin`
 
+```
+cd .\inject\
+cargo run
+```
 
 ## References and Credits
 

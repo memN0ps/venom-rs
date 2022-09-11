@@ -105,7 +105,7 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     }
 
     //
-    // Step 3) Process images relocations (rebase image)
+    // Step 3) Process image relocations (rebase image)
     //
 
     unsafe { rebase_image(module_base as _, new_module_base) };
