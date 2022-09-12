@@ -11,7 +11,7 @@ fn main() {
 
     let dll_bytes = include_bytes!(r"C:\Users\memn0ps\Documents\GitHub\srdi-rs\testdll\target\debug\testdll.dll");    
     
-    let user_function_hash = hash("SayHello"); // TODO: Take this as user input
+    let user_function_hash = hash(b"SayHello".as_slice()); // TODO: Take this as user input
     let user_data = "memN0ps"; // TODO: Take this as user input
     log::debug!("[+] User function hash: {:#x} and user data {}", user_function_hash, user_data);
 
@@ -199,15 +199,27 @@ fn is_64_dll(module_base: usize) -> bool {
     return false;
 }
 
-// Thanks MaulingMonkey and chrisd :) (Rust Community Discord server #windows-dev)
-fn hash(word: &str) -> u32 {
-    const HASH_KEY: u32 = 13;
-    let mut h = 0_u32;
-    for c in word.bytes() {
-        h = h.rotate_right(HASH_KEY * 2);
-        h += c as u32;
-    }
-    h.rotate_right(HASH_KEY)
+//credits: janoglezcampos / @httpyxel / yxel
+pub const fn hash(buffer : &[u8]) -> u32
+{   
+	let mut hsh : u32   = 5381;
+    let mut iter: usize = 0;
+    let mut cur : u8; 
+
+	while iter < buffer.len()
+	{   
+        cur = buffer[iter];
+        if cur == 0 {
+            iter += 1;
+            continue;
+        }
+        if cur >= ('a' as u8) {
+			cur -= 0x20;
+        }
+		hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
+        iter += 1;
+	};
+	return hsh;
 }
 
 /// Gets exports by name
