@@ -75,3 +75,4 @@ cargo run
 * https://github.com/memN0ps/mmapper-rs
 * https://github.com/2vg/blackcat-rs/tree/master/crate/mini-sRDI
 * https://github.com/Jaxii/idk-rs/
+* https://github.com/janoglezcampos/rust_syscalls/
