@@ -17,19 +17,18 @@ cargo build
 2. Build `reflective_loader` project. The loader will emulate `LoadLibraryA` and do additional things:
 
 * Load required modules and exports by name
-* Allocate memory and copy sections into the newly allocated memory (`VirtualAlloc` uses `RW` not `RWX`)
+* Allocate memory and copy DOS / NT headers and sections into the newly allocated memory (`VirtualAlloc` uses `RW` not `RWX`)
 * Process image relocations (rebase image)
 * Process image import table (resolve imports)
 * Set protection for each section (`VirtualProtect` uses only what is necessary)
-* Execute `DllMain` AND `USER_FUNCTION` (TODO USER_FUNCTION)
-* Free shellcode memory and exit thread (TODO)
+* Execute `DllMain` AND `USER_FUNCTION` (export address is retrieved via hash)
 
 ```
 cd .\reflective_loader\
 cargo build
 ```
 
-3. Run `generate_shellcode` project. This is what the shellcode looks like in memory:
+3. Run `generate_shellcode` project. This will generate a `shellcode.bin` file that looks like this in memory:
 
 ```
 -----------------------
@@ -48,12 +47,18 @@ cd .\generate_shellcode\
 cargo run
 ```
 
-4. Run `inject` or bring your own injector and inject `shellcode.bin`
+4. Run `inject` or bring your own injector and inject `shellcode.bin` with your favorite shellcode injection and execution technique.
 
 ```
 cd .\inject\
 cargo run
 ```
+
+## TODO
+* Change all exports to be retrieved by hash rather than name
+* Stomp / erase DOS and NT headers
+* Free shellcode memory and exit thread
+* x86 support (mostly already done)
 
 ## References and Credits
 
