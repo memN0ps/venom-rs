@@ -16,7 +16,7 @@ cargo build
 
 2. Build `reflective_loader` project. The loader will emulate `LoadLibraryA` and do additional things:
 
-* Load required modules and exports by name
+* Load required modules and exports by hash
 * Allocate memory and copy DOS / NT headers and sections into the newly allocated memory (`VirtualAlloc` uses `RW` not `RWX`)
 * Process image relocations (rebase image)
 * Process image import table (resolve imports)
@@ -55,7 +55,6 @@ cargo run
 ```
 
 ## TODO
-* Change all exports to be retrieved by hash rather than name
 * Stomp / erase DOS and NT headers
 * Free shellcode memory and exit thread
 * x86 support (mostly already done)
