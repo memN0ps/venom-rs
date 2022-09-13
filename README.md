@@ -47,11 +47,15 @@ cd .\generate_shellcode\
 cargo run
 ```
 
-4. Run `inject` or bring your own injector and inject `shellcode.bin` with your favorite shellcode injection and execution technique.
+4. Build `inject` or bring your own injector and inject `shellcode.bin` with your favorite shellcode injection and execution technique.
 
 ```
 cd .\inject\
-cargo run
+cargo build
+```
+
+```
+inject.exe <process> <shellcode.bin>
 ```
 
 ## TODO

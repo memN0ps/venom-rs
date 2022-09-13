@@ -418,17 +418,17 @@ pub unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void 
 /// Gets a pointer to PEB_LDR_DATA
 pub fn get_peb_ldr() -> usize {
     let teb: PTEB;
-	unsafe {
+    unsafe {
         #[cfg(target_arch = "x86")]
-		asm!("mov {teb}, fs:[0x18]", teb = out(reg) teb);
+        asm!("mov {teb}, fs:[0x18]", teb = out(reg) teb);
 
-		#[cfg(target_arch = "x86_64")]
-		asm!("mov {teb}, gs:[0x30]", teb = out(reg) teb);
-	}
+        #[cfg(target_arch = "x86_64")]
+        asm!("mov {teb}, gs:[0x30]", teb = out(reg) teb);
+    }
 
-	let teb = unsafe { &mut *teb };
-	let peb = unsafe { &mut *teb.ProcessEnvironmentBlock };
-	let peb_ldr = peb.Ldr;
+    let teb = unsafe { &mut *teb };
+    let peb = unsafe { &mut *teb.ProcessEnvironmentBlock };
+    let peb_ldr = peb.Ldr;
 
     peb_ldr as _
 }

