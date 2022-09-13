@@ -215,8 +215,7 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
 
 
 /// Copy headers into the target memory location
-#[no_mangle]
-unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
+pub unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
@@ -230,8 +229,7 @@ unsafe fn copy_headers(module_base: *const u8, new_module_base: *mut c_void) {
 }
 
 /// Process image relocations (rebase image)
-#[no_mangle]
-unsafe fn rebase_image(module_base: *mut c_void) {
+pub unsafe fn rebase_image(module_base: *mut c_void) {
 
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -284,8 +282,7 @@ unsafe fn rebase_image(module_base: *mut c_void) {
 }
 
 /// Process image import table (resolve imports)
-#[no_mangle]
-unsafe fn resolve_imports(module_base: *mut c_void) {
+pub unsafe fn resolve_imports(module_base: *mut c_void) {
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
     #[cfg(target_arch = "x86")]
@@ -360,8 +357,7 @@ unsafe fn resolve_imports(module_base: *mut c_void) {
 }
 
 /// Copy sections of the dll to a memory location
-#[no_mangle]
-unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //Vec<u8>
+pub unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //Vec<u8>
     
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -420,8 +416,7 @@ unsafe fn copy_sections_to_local_process(module_base: usize) -> *mut c_void { //
 }
 
 /// Gets a pointer to PEB_LDR_DATA
-#[no_mangle]
-fn get_peb_ldr() -> usize {
+pub fn get_peb_ldr() -> usize {
     let teb: PTEB;
 	unsafe {
         #[cfg(target_arch = "x86")]
@@ -439,7 +434,6 @@ fn get_peb_ldr() -> usize {
 }
 
 /// Gets the modules and module exports by hash and saves their addresses
-#[no_mangle]
 pub fn get_exported_functions_by_hash() -> bool {
 
     let kernel32_base = unsafe { get_loaded_module_by_hash(KERNEL32_HASH) };
@@ -480,7 +474,6 @@ pub fn get_exported_functions_by_hash() -> bool {
 }
 
 /// Gets loaded module by hash
-#[no_mangle]
 pub unsafe fn get_loaded_module_by_hash(module_hash: u32) -> *mut u8 {
     let peb_ptr_ldr_data = get_peb_ldr() as *mut PEB_LDR_DATA;
 	
@@ -495,7 +488,7 @@ pub unsafe fn get_loaded_module_by_hash(module_hash: u32) -> *mut u8 {
         
         if module_hash == hash(dll_name) {
             return (*module_list).DllBase as _;
-		}
+        }
 
         module_list = (*module_list).InLoadOrderLinks.Flink as *mut LDR_DATA_TABLE_ENTRY;
 	}
@@ -503,33 +496,8 @@ pub unsafe fn get_loaded_module_by_hash(module_hash: u32) -> *mut u8 {
     return std::ptr::null_mut();
 }
 
-//credits: janoglezcampos / @httpyxel / yxel
-/// Generates a unique hash
-pub const fn hash(buffer : &[u8]) -> u32
-{   
-	let mut hsh : u32   = 5381;
-    let mut iter: usize = 0;
-    let mut cur : u8; 
-
-	while iter < buffer.len()
-	{   
-        cur = buffer[iter];
-        if cur == 0 {
-            iter += 1;
-            continue;
-        }
-        if cur >= ('a' as u8) {
-			cur -= 0x20;
-        }
-		hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
-        iter += 1;
-	};
-	return hsh;
-}
-
 /// Gets the address of a function by hash
-#[no_mangle]
-unsafe fn get_export_by_hash(module_base: *mut u8, module_name_hash: u32) -> usize {
+pub unsafe fn get_export_by_hash(module_base: *mut u8, module_name_hash: u32) -> usize {
 
     let dos_header = module_base as *mut IMAGE_DOS_HEADER;
 
@@ -575,6 +543,28 @@ unsafe fn get_export_by_hash(module_base: *mut u8, module_name_hash: u32) -> usi
         }
     }  
     return 0;
+}
+
+//credits: janoglezcampos / @httpyxel / yxel
+/// Generates a unique hash
+pub fn hash(buffer : &[u8]) -> u32 {   
+    let mut hsh : u32   = 5381;
+    let mut iter: usize = 0;
+    let mut cur : u8; 
+
+    while iter < buffer.len() {   
+        cur = buffer[iter];
+        if cur == 0 {
+            iter += 1;
+            continue;
+        }
+        if cur >= ('a' as u8) {
+            cur -= 0x20;
+        }
+        hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
+        iter += 1;
+    };
+    return hsh;
 }
 
 //credits: janoglezcampos / @httpyxel / yxel

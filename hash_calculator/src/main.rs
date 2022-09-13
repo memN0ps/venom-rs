@@ -31,24 +31,22 @@ fn main() {
 }
 
 //credits: janoglezcampos / @httpyxel / yxel
-pub const fn hash(buffer : &[u8]) -> u32
-{   
-	let mut hsh : u32   = 5381;
+pub fn hash(buffer : &[u8]) -> u32 {   
+    let mut hsh : u32   = 5381;
     let mut iter: usize = 0;
     let mut cur : u8; 
 
-	while iter < buffer.len()
-	{   
+    while iter < buffer.len() {   
         cur = buffer[iter];
         if cur == 0 {
             iter += 1;
             continue;
         }
         if cur >= ('a' as u8) {
-			cur -= 0x20;
+            cur -= 0x20;
         }
-		hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
+        hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
         iter += 1;
-	};
-	return hsh;
+    };
+    return hsh;
 }
