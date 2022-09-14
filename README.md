@@ -42,6 +42,49 @@ cargo build
 -----------------------
 ```
 
+This is the bootstrap shellcode that does the magic by passing the parameters and calling the reflective loader
+
+```asm
+call 0x00
+pop rcx
+mov r8, rcx
+
+push rsi
+mov rsi, rsp
+and rsp, 0x0FFFFFFFFFFFFFFF0
+sub rsp, 0x30
+
+mov qword ptr [rsp + 0x20], rcx
+sub qword ptr [rsp + 0x20], 0x5
+
+mov dword ptr [rsp + 0x28], <flags>
+
+mov r9, <length of user data>
+add r8, <user function offset> + <length of DLL>
+mov edx, <hash of function>
+add rcx, <offset of dll>
+
+call <reflective loader address>
+
+nop
+nop
+nop
+nop
+
+mov rsp, rsi
+pop rsi
+ret
+
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+```
+
 ```
 cd .\generate_shellcode\
 cargo run
@@ -60,7 +103,7 @@ inject.exe <process> <shellcode.bin>
 
 ## TODO
 * Stomp / erase DOS and NT headers
-* Free shellcode memory and exit thread
+* Free shellcode memory and exit thread (This can be done by the user)
 * x86 support (mostly already done)
 
 ## References and Credits

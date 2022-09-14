@@ -31,7 +31,7 @@ fn SayHello(user_data: *mut c_void, user_data_len: u32) {
     let user_data_slice = unsafe { core::slice::from_raw_parts(user_data as *const u8, user_data_len as _) };
     let user_data = std::str::from_utf8(user_data_slice).unwrap();
 
-    let message = "Hello from ".to_owned() + user_data; 
+    let message = "Hello from ".to_owned() + user_data;
     
     unsafe  {
         MessageBoxA(

