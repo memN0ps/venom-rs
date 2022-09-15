@@ -28,7 +28,7 @@ cargo make --profile production
 generate_shellcode.exe <reflective loader dll path> <user dll path> <user function> <user data> <shellcode outfile path>
 ```
 
-3). Use `inject` or bring your own injector and inject the position-independent shellcode with your favorite injection and execution technique.
+3). Use `inject` or bring your own injector (BYOI) and inject the position-independent shellcode with your favorite injection and execution technique.
 
 ```
 inject.exe <process> <shellcode.bin>
