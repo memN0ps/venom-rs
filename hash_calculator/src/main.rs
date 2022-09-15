@@ -18,7 +18,10 @@ fn main() {
     println!("VirtualProtect: {:#x}", hash(virtual_protect));
 
     let flush_instruction_cache = "FlushInstructionCache".as_bytes();
-    println!("FlushInstructionCache: {:#x}", hash(flush_instruction_cache));
+    println!(
+        "FlushInstructionCache: {:#x}",
+        hash(flush_instruction_cache)
+    );
 
     let virtual_free = "VirtualFree".as_bytes();
     println!("VirtualFree: {:#x}", hash(virtual_free));
@@ -31,12 +34,12 @@ fn main() {
 }
 
 //credits: janoglezcampos / @httpyxel / yxel
-pub fn hash(buffer : &[u8]) -> u32 {   
-    let mut hsh : u32   = 5381;
+pub fn hash(buffer: &[u8]) -> u32 {
+    let mut hsh: u32 = 5381;
     let mut iter: usize = 0;
-    let mut cur : u8; 
+    let mut cur: u8;
 
-    while iter < buffer.len() {   
+    while iter < buffer.len() {
         cur = buffer[iter];
         if cur == 0 {
             iter += 1;
@@ -47,6 +50,6 @@ pub fn hash(buffer : &[u8]) -> u32 {
         }
         hsh = ((hsh << 5).wrapping_add(hsh)) + cur as u32;
         iter += 1;
-    };
+    }
     return hsh;
 }
