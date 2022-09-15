@@ -80,16 +80,16 @@ const VIRTUAL_FREE_HASH: u32 = 0xe144a60e;
 const EXIT_THREAD_HASH: u32 = 0xc165d757;
 
 #[allow(dead_code)]
-const SRDI_CLEARHEADER: u32 = 0x1;
+//const SRDI_CLEARHEADER: u32 = 0x1;
 
 #[allow(dead_code)]
 const SRDI_CLEARMEMORY: u32 = 0x2;
 
 #[allow(dead_code)]
-const SRDI_OBFUSCATEIMPORTS: u32 = 0x4;
+//const SRDI_OBFUSCATEIMPORTS: u32 = 0x4;
 
 #[allow(dead_code)]
-const SRDI_PASS_SHELLCODE_BASE: u32 = 0x8;
+//const SRDI_PASS_SHELLCODE_BASE: u32 = 0x8;
 
 /// Performs a Reflective DLL Injection
 #[no_mangle]
@@ -217,28 +217,18 @@ pub extern "system" fn reflective_loader(image_bytes: *mut c_void, user_function
 
     unsafe { USER_FUNCTION = Some(std::mem::transmute::<_, fnUserFunction>(user_function_address)) };
     
-    if flags & SRDI_PASS_SHELLCODE_BASE != 0 {
-        // Execute user function with shellcode base and user data length
-        unsafe { USER_FUNCTION.unwrap()(shellcode_base, user_data_length) };
-    } else {
-        // Execute user function with user data and user data length
-        unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
-    }
+    // Execute user function with user data and user data length
+    unsafe { USER_FUNCTION.unwrap()(user_data, user_data_length) };
 
     //
     // 8) Free memory and exit thread (TODO)
     //
 
     if flags & SRDI_CLEARMEMORY != 0 {
-        unsafe {
-            asm!("nop");
-            asm!("nop");
-            asm!("nop");
-            asm!("nop");
-        }
         // Freeing the shellcode memory itself will crash the process because you we're not resuming execution flow of the program (ret 2 caller)
-        // unsafe { VIRTUAL_FREE.unwrap()(shellcode_base as _, 0, MEM_RELEASE) };
-        // Exit thread won't work because the memory above will free the RDI itself
+        // But we can free the memory of the new_module_base from VirtualAlloc because we have finished executing it
+        unsafe { VIRTUAL_FREE.unwrap()(new_module_base as _, 0, MEM_RELEASE) };
+        // Exit thread won't work because if we exit the current thread then, execution flow will not resume.
         // unsafe { EXIT_THREAD.unwrap()(1) };
     }
 }

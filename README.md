@@ -68,19 +68,11 @@ call <reflective loader address>
 
 nop
 nop
-nop
-nop
 
 mov rsp, rsi
 pop rsi
 ret
 
-nop
-nop
-nop
-nop
-nop
-nop
 nop
 nop
 ```
