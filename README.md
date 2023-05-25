@@ -17,7 +17,20 @@ cargo build --release
 2). Generate the shellcode.
 
 ```
+.\generate_shellcode.exe -h
+Shellcode Reflective DLL Injection (sRDI)
+
 Usage: generate_shellcode.exe [OPTIONS] --loader <LOADER> --payload <PAYLOAD> --function <FUNCTION> --parameter <PARAMETER> --output <OUTPUT>
+
+Options:
+      --loader <LOADER>        The reflective loader DLL path (loader.dll)
+      --payload <PAYLOAD>      The payload DLL path (payload.dll)
+      --function <FUNCTION>    The function to execute inside payload.dll (SayHello)
+      --parameter <PARAMETER>  The parameter to pass to the function inside payload.dll (https://localhost:1337/)
+      --output <OUTPUT>        The output file path (shellcode.bin)
+      --flags <FLAGS>          The 0x0 flag will execute DllMain and any other flag will execute the function inside payload.dll (SayHello) [default: 1]
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 3). Bring your own injector (BYOI) and inject the position-independent shellcode with your favourite injection and execution technique.
