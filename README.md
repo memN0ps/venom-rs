@@ -6,7 +6,7 @@ Shellcode reflective DLL injection (sRDI) is a process injection technique that 
 
 ## Usage
 
-0) [Install Rust](https://www.rust-lang.org/tools/install)
+0). [Install Rust](https://www.rust-lang.org/tools/install)
 
 1). Build all of the projects
 
@@ -26,10 +26,12 @@ Usage: generate_shellcode.exe [OPTIONS] --loader <LOADER> --payload <PAYLOAD> --
 inject.exe <process> <shellcode.bin>
 ```
 
+## Description
+
 * Bootstrap is `bootstrap.asm`
 * RDI is `reflective_loader.dll`
 * Existing DLL is `payload.dll`
-* User-Data is a parameter to `UserFunction` ()`https://127.0.0.1:1337/`)
+* User-Data is a parameter to `UserFunction` (`https://127.0.0.1:1337/`)
 * Flag allows execution of `DllMain` if `0` or `UserFunction` if not `0`
 * Output is PIC shellcode (`shellcode.bin`) as shown below:
 
