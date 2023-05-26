@@ -12,7 +12,7 @@ use windows_sys::{
                 IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, IMAGE_DIRECTORY_ENTRY_EXPORT,
             }},
             SystemServices::{
-                IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY,
+                IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
             }, WindowsProgramming::{CLIENT_ID}, Kernel::{LIST_ENTRY, NT_TIB}, Threading::PEB,
         },
     },
@@ -145,6 +145,55 @@ pub unsafe fn get_loaded_module_by_name(module_name: &[u8]) -> Option<*mut u8>
     }
 
     return None;
+}
+
+pub unsafe fn get_section_header_by_hash(module_base: *mut u8, section_hash: u32) -> Option<*mut IMAGE_SECTION_HEADER> {
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
+    
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+
+    let section_header = (&(*nt_headers).OptionalHeader as *const _ as usize
+        + (*nt_headers).FileHeader.SizeOfOptionalHeader as usize)
+        as *mut IMAGE_SECTION_HEADER;
+
+    for i in 0..(*nt_headers).FileHeader.NumberOfSections as usize {
+        let section_name = (*section_header.add(i)).Name;
+        //log::info!("{}", std::str::from_utf8(&section_name).unwrap());
+
+        if section_hash == dbj2_hash(&section_name) {
+            return Some(section_header);
+        }
+    }
+
+    None
+}
+
+/// Get a pointer to IMAGE_DOS_HEADER
+pub unsafe fn get_dos_header(module_base: *mut u8) -> Option<*mut IMAGE_DOS_HEADER> 
+{
+    let dos_header = module_base as *mut IMAGE_DOS_HEADER;
+
+    if (*dos_header).e_magic != IMAGE_DOS_SIGNATURE 
+    {
+        return None;
+    }
+
+    return Some(dos_header);
+}
+
+/// Get a pointer to IMAGE_NT_HEADERS64 x86_64
+pub unsafe fn get_nt_headers(module_base: *mut u8) -> Option<*mut IMAGE_NT_HEADERS64> 
+{
+    let dos_header = get_dos_header(module_base)?;
+
+    let nt_headers = (module_base as usize + (*dos_header).e_lfanew as usize) as *mut IMAGE_NT_HEADERS64;
+
+    if (*nt_headers).Signature != IMAGE_NT_SIGNATURE as _ 
+    {
+        return None;
+    }
+
+    return Some(nt_headers);
 }
 
 pub fn dbj2_hash(buffer: &[u8]) -> u32 
