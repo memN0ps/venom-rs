@@ -83,7 +83,7 @@ nop
 ## Example
 
 ```
-PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\generate_shellcode.exe --loader .\reflective_loader.dll --payload .\payload.dll --function UserFunction --parameter https://127.0.0.1:1337/ --flags 0 --output shellcode.bin
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\generate_shellcode.exe --loader .\reflective_loader.dll --payload .\payload.dll --function SayHello --parameter https://127.0.0.1:1337/ --flags 0 --output shellcode.bin
 Loader Path: .\reflective_loader.dll
 Payload Path: .\payload.dll
 Output Path: shellcode.bin
@@ -94,7 +94,7 @@ Output Path: shellcode.bin
 [+] Total Shellcode Length: 117350
 [*] loader(payload_dll: *mut c_void, function_hash: u32, user_data: *mut c_void, user_data_len: u32, _shellcode_bin: *mut c_void, _flags: u32)
 [*] arg1: rcx, arg2: rdx, arg3: r8, arg4: r9, arg5: [rsp + 0x20], arg6: [rsp + 0x28]
-PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
+[*] rcx: 0xe4a rdx: 0x756de3c6 r8: https://127.0.0.1:1337/, r9: 0x17, arg5: ???, arg6: 0
 ```
 
 ```

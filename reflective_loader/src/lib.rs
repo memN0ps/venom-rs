@@ -351,7 +351,7 @@ pub unsafe extern "system" fn loader(payload_dll: *mut c_void, function_hash: u3
         #[allow(non_camel_case_types)]
         type fnUserFunction = unsafe extern "system" fn(user_data: *mut c_void, user_data_length: u32) -> BOOL;
         
-        let user_function_entry_point = get_export_by_hash(user_data as _, function_hash).unwrap();
+        let user_function_entry_point = get_export_by_hash(new_module_base as _, function_hash).unwrap();
 
         #[allow(non_snake_case)]
         let UserFunction = transmute::<_, fnUserFunction>(user_function_entry_point);
