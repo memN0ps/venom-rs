@@ -1,10 +1,18 @@
 # Shellcode Reflective DLL Injection (sRDI)
 
-The reflective loader is under 4KB in size.
-
-## Description
-
 Shellcode reflective DLL injection (sRDI) is a process injection technique that allows us to convert a given DLL into a position-independent code which can then be injected using our favourite shellcode injection and execution technique.
+
+## Features
+
+- The size of the reflective loader is approximately 4KB.
+
+- Does not release the memory that was allocated by the injector, nor does it remove any existing `RWX` permissions set by the user injector, if applicable.
+
+- Does not overwrite or erase the DOS or NT Headers of the newly allocated memory after/before resolving imports or rebasing image.
+
+- Applies protection settings for each section allocated by the `VirtualAlloc` function, and subsequently executes either DllMain or SayHello functions.
+
+What about `OPSEC`? Feel free to implement it yourself :)
 
 ## Usage
 
