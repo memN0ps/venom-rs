@@ -15,8 +15,8 @@ pub unsafe extern "system" fn DllMain(
     if call_reason == DLL_PROCESS_ATTACH {
         MessageBoxA(
             0 as _,
-            "Game Over!\0".as_ptr() as _,
-            "DllMain executed!\0".as_ptr() as _,
+            "Rust DLL injected!\0".as_ptr() as _,
+            "Rust DLL\0".as_ptr() as _,
             0x0,
         );
 
@@ -32,7 +32,7 @@ fn SayHello(user_data: *mut c_void, user_data_len: u32) {
     let user_data_slice =
         unsafe { core::slice::from_raw_parts(user_data as *const u8, user_data_len as _) };
     let user_data = std::str::from_utf8(user_data_slice).unwrap();
-    let message = format!("Hello from {}", user_data);
+    let message = format!("Hello from {}\0", user_data);
 
     unsafe {
         MessageBoxA(

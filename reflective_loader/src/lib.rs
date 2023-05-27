@@ -163,13 +163,13 @@ pub unsafe extern "system" fn loader(payload_dll: *mut c_void, function_hash: u3
             *dest_data = src_data;
         }
     }
-
-    /* 
+ 
     // Copy headers into the target memory location (remember to stomp/erase DOS and NT headers later)
+    // get_export_by_hash will fail for new_module_base if we don't copy NT and DOS headers to newly allocated memory
     for i in 0..(*nt_headers).OptionalHeader.SizeOfHeaders 
     {
         new_module_base.cast::<u8>().add(i as usize).write(module_base.add(i as usize).read());
-    }*/
+    }
 
     // Everything from here will use the new_module_base memory region that was just allocated via VirtualAlloc
 
@@ -337,7 +337,6 @@ pub unsafe extern "system" fn loader(payload_dll: *mut c_void, function_hash: u3
     //
     let entry_point = new_module_base as usize + (*nt_headers).OptionalHeader.AddressOfEntryPoint as usize;    
 
-
     #[allow(non_camel_case_types)]
     type fnDllMain = unsafe extern "system" fn(module: HMODULE, call_reason: u32, reserved: *mut c_void) -> BOOL;
 
@@ -350,11 +349,12 @@ pub unsafe extern "system" fn loader(payload_dll: *mut c_void, function_hash: u3
     } else {
         #[allow(non_camel_case_types)]
         type fnUserFunction = unsafe extern "system" fn(user_data: *mut c_void, user_data_length: u32) -> BOOL;
-        
-        let user_function_entry_point = get_export_by_hash(new_module_base as _, function_hash).unwrap();
+
+        // We need to use the old module base from payload.dll to find the address of the hash because new one does not have NT or DOS headers
+        let user_function_address = get_export_by_hash(new_module_base as _, function_hash).unwrap();
 
         #[allow(non_snake_case)]
-        let UserFunction = transmute::<_, fnUserFunction>(user_function_entry_point);
+        let UserFunction = transmute::<_, fnUserFunction>(user_function_address);
 
         // Call user function passing the user data and user data length as parameters
         UserFunction(user_data, user_data_len);

