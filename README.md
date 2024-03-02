@@ -1,4 +1,4 @@
-# Shellcode Reflective DLL Injection (sRDI)
+# Shellcode Reflective DLL Injection (sRDI) in Rust (Codename: Venom)
 
 Shellcode reflective DLL injection (sRDI) is a process injection technique that allows us to convert a given DLL into a position-independent code which can then be injected using our favourite shellcode injection and execution technique.
 
